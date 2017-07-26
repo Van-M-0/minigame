@@ -1,0 +1,7 @@
+
+.idea/
+bin/
+tools/
+/pkg
+chcore.iml
+process.xlsx
