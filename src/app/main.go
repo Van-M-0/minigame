@@ -7,6 +7,7 @@ import (
 	"os"
 	"fmt"
 	"sync"
+	"msgpacker"
 )
 
 func startClient() {
@@ -19,6 +20,42 @@ func startClient() {
 
 		},
 		MsgCb: func(client defines.ITcpClient, message *proto.Message) {
+			if message.Cmd == proto.CmdUserLogin {
+				var res proto.UserLoginRet
+				msgpacker.UnMarshal(message.Msg, &res)
+				fmt.Println("client login res ", res)
+				if res.ErrCode == "ok" {
+					client.Send(proto.CmdUserCreateRoom, &proto.UserCreateRoom{
+						Kind: 1,
+						Conf: []byte(`{"A":1}`),
+					})
+				}
+			} else if message.Cmd == proto.CmdUserCreateRoom {
+				var res proto.UserCreateRoomRet
+				msgpacker.UnMarshal(message.Msg, &res)
+				fmt.Println("client create room ret ", res)
+				if res.ErrCode == "ok" {
+					client.Send(proto.CmdUserEnterRoom, &proto.UserEnterRoom{
+						Test:`{"Test":112}`,
+					})
+				}
+			} else if message.Cmd == proto.CmdUserEnterRoom {
+				var res proto.UserEnterRoomRet
+				msgpacker.UnMarshal(message.Msg, &res)
+				fmt.Println("client enter room ret ", res, string(res.Data))
+				if res.ErrCode == "ok" {
+					client.Send(proto.CmdUserGameMessage, &proto.UserMessage{
+						Cmd: 1,
+					})
+				}
+			} else if message.Cmd == proto.CmdUserGameMessage {
+				var res proto.UserMessageRet
+				msgpacker.UnMarshal(message.Msg, &res)
+				fmt.Println("game message ", res, string(res.Msg))
+				if res.Cmd == proto.CmdEgUserReady {
+
+				}
+			}
 		},
 		AuthCb: func(defines.ITcpClient) error {
 			return nil

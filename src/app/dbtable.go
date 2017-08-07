@@ -72,6 +72,7 @@ type T_Users struct {
 	Exp 		uint32		`gorm:"default:0"`
 	Coins 		uint32		`gorm:"default:0"`
 	Gems 		uint32 		`gorm:"default:0"`
-	Roomid 		string 		`gorm:"size:8"`
+	Roomcard 	uint32		`gorm:"default:0"`
+	Roomid 		uint32 		`gorm:"default:0"`
 	History 	string 		`gorm:"size:4096;not null;default:''"`
 }

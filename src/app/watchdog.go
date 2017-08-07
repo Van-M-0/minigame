@@ -21,7 +21,7 @@ type watchdog struct {
 func newWatchdog() *watchdog {
 	dog := &watchdog{}
 	dog.clients = make(map[uint32]*connection)
-	dog.lb = newLobby()
+	dog.lb = newLobby(dog)
 	return dog
 }
 
@@ -31,6 +31,20 @@ func (d *watchdog) clientConnect(client defines.ITcpClient) error {
 }
 
 func (d *watchdog) clientDisconnect(client defines.ITcpClient) {
+	fmt.Println("client disconnected")
+	iuid := client.Get("uid")
+	if iuid == nil {
+		fmt.Println("client uid not extis")
+		return
+	}
+	d.cliLock.Lock()
+	defer d.cliLock.Unlock()
+	uid := iuid.(uint32)
+	if _, ok := d.clients[uid]; !ok {
+		fmt.Println("client not eixts dis", uid)
+		return
+	}
+	d.lb.onUserOffline(uid)
 	fmt.Println("client disconnected")
 }
 
@@ -48,7 +62,6 @@ func (d *watchdog) clientAuth(client defines.ITcpClient) error {
 }
 
 func (d *watchdog) clientMessage(client defines.ITcpClient, message *proto.Message) {
-	fmt.Println("client message", message)
 	iuid := client.Get("uid")
 	if iuid == nil {
 		fmt.Println("client uid not extis")
@@ -56,7 +69,7 @@ func (d *watchdog) clientMessage(client defines.ITcpClient, message *proto.Messa
 	}
 	uid := iuid.(uint32)
 	if _, ok := d.clients[uid]; !ok {
-		fmt.Println("client not eixts")
+		fmt.Println("client not eixts msg ", uid)
 		return
 	}
 	d.lb.onUserMessage(uid, message)
@@ -66,13 +79,27 @@ func (d *watchdog) serverMessage(uid uint32, message *proto.Message) {
 	d.lb.onServerMessage(uid, message)
 }
 
-func (d *watchdog) sendClientMessage(uid uint32, message *proto.Message) {
+func (d *watchdog) sendClientMessage(uid uint32, cmd uint32, data interface{}) {
+	d.cliLock.Lock()
 	cli, ok := d.clients[uid]
-	if !ok {
-		fmt.Println("client not exits", uid)
-		return
+	if ok {
+		cli.Send(cmd, data)
+	} else {
+		fmt.Println("client not exits send", uid)
 	}
-	cli.Send(message.Cmd, message.Msg)
+	d.cliLock.Unlock()
+}
+
+func (d *watchdog) bcClientMessage(uids []uint32, cmd uint32, data interface{}) {
+	d.cliLock.Lock()
+	for _, uid := range uids {
+		if cli, ok := d.clients[uid]; ok {
+			cli.Send(cmd, data)
+		} else {
+			fmt.Println("client not exits bc", uid)
+		}
+	}
+	d.cliLock.Unlock()
 }
 
 func (d *watchdog) start() {

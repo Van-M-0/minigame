@@ -27,7 +27,7 @@ type dbClient struct {
 	uri 		string
 	reqChan 	chan *request
 }
-
+//CREATE DATABASE IF NOT EXISTS mygame default charset utf8 COLLATE utf8_general_ci;
 func newDbClient() *dbClient {
 	dc := &dbClient{}
 	dc.reqChan = make(chan *request, 1024)
@@ -35,8 +35,8 @@ func newDbClient() *dbClient {
 		host: "127.0.0.1:3306",
 		user: "root",
 		pwd: "1",
-		name: "mygame",
-		detailLog: true,
+		name: "ergui",
+		detailLog: false,
 		singular: true,
 	}
 
@@ -47,7 +47,7 @@ func newDbClient() *dbClient {
 		opt.name,
 	)
 
-	fmt.Println("db proxy connection info ", uri)
+	//fmt.Println("db proxy connection info ", uri)
 	db, err := gorm.Open("mysql", uri)
 	if err != nil {
 		fmt.Println("create db proxy err ", err)
@@ -227,6 +227,8 @@ func dbLobbyUserLogin(account string, cb func(accounts *T_Accounts, users *T_Use
 			db.GetUserInfo(account, &user)
 			if ok {
 				cb(&acc, &user, 0)
+			} else {
+				cb(nil, nil, 1)
 			}
 		}
 	})
