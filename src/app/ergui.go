@@ -261,27 +261,32 @@ func (h *egHandler) createRoom(roomId int, user *userInfo, req *proto.UserCreate
 }
 
 func (h *egHandler) userEnterRoom(user *userInfo) {
-	p := &playerInfo{
-		userInfo: user,
-		seat: - 1,
-		ready: false,
-	}
 
-	p.seat = h.setSeat(p)
-	if p.seat == -1 {
-		h.sendMessage(p, proto.CmdUserEnterRoom, &proto.UserEnterRoomRet{
-			ErrCode: "full",
-			Kind: EgKind,
-		})
-		return
+	_, entered := h.playerList[user.UserId]
+	if entered == false {
+		p := &playerInfo{
+			userInfo: user,
+			seat: - 1,
+			ready: false,
+		}
+
+		p.seat = h.setSeat(p)
+		if p.seat == -1 {
+			h.sendMessage(p, proto.CmdUserEnterRoom, &proto.UserEnterRoomRet{
+				ErrCode: "full",
+				Kind: EgKind,
+			})
+			return
+		}
+		h.seatList[p.seat] = p
+		h.playerList[p.UserId] = p
 	}
-	h.seatList[p.seat] = p
-	h.playerList[p.UserId] = p
 
 	type resEnterUser struct {
 		*userInfo
 		Seat 		int
 		Ready 		bool
+		ReEnter 	bool
 	}
 
 	type egUserEnter struct {
@@ -294,6 +299,7 @@ func (h *egHandler) userEnterRoom(user *userInfo) {
 			userInfo: player.userInfo,
 			Seat: player.seat,
 			Ready: player.ready,
+			ReEnter: entered,
 		})
 	}
 
