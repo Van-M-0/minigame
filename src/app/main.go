@@ -36,13 +36,14 @@ func startClient() {
 				fmt.Println("client create room ret ", res)
 				if res.ErrCode == "ok" {
 					client.Send(proto.CmdUserEnterRoom, &proto.UserEnterRoom{
+						RoomId: 799523,
 						Test:`{"Test":112}`,
 					})
 				}
 			} else if message.Cmd == proto.CmdUserEnterRoom {
 				var res proto.UserEnterRoomRet
 				msgpacker.UnMarshal(message.Msg, &res)
-				fmt.Println("client enter room ret ", res, string(res.Data))
+				fmt.Println("client enter room ret ", res)
 				if res.ErrCode == "ok" {
 					client.Send(proto.CmdUserGameMessage, &proto.UserMessage{
 						Cmd: 1,
@@ -51,7 +52,7 @@ func startClient() {
 			} else if message.Cmd == proto.CmdUserGameMessage {
 				var res proto.UserMessageRet
 				msgpacker.UnMarshal(message.Msg, &res)
-				fmt.Println("game message ", res, string(res.Msg))
+				fmt.Println("game message ", res, res.Msg)
 				if res.Cmd == proto.CmdEgUserReady {
 
 				}

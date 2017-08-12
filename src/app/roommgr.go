@@ -3,7 +3,6 @@ package main
 import (
 	"exportor/proto"
 	"msgpacker"
-	"math/rand"
 	"fmt"
 )
 
@@ -33,6 +32,7 @@ func (mgr *roomMgr) onMessage(user *userInfo, cmd uint32, data []byte) {
 
 
 func (mgr *roomMgr) genRoomId() int {
+	/*
 	for i := 0; i < 20; i++ {
 		d := rand.Intn(899999) + 100000
 		if _, ok := mgr.rooms[d]; ok {
@@ -41,6 +41,8 @@ func (mgr *roomMgr) genRoomId() int {
 		return d
 	}
 	return -1
+	*/
+	return 799523
 }
 
 func (mgr *roomMgr) onUserCreateRoom(user *userInfo, data []byte) {
@@ -86,12 +88,20 @@ func (mgr *roomMgr) onUserCreateRoom(user *userInfo, data []byte) {
 
 func (mgr *roomMgr) onUserEnterRoom(user *userInfo, data []byte) {
 	fmt.Println("user enter room", user)
-	if room, ok := mgr.rooms[user.RoomId]; ok {
+
+	var req proto.UserEnterRoom
+	msgpacker.UnMarshal(data, &req)
+
+	if room, ok := mgr.rooms[req.RoomId]; ok {
 		room.reqCh <- &erguiRoomReq {
 			cmd: "e",
 			user: user,
 			data: data,
 		}
+	} else {
+		mgr.sendClientMessage(user, proto.CmdUserEnterRoom, &proto.UserEnterRoomRet{
+			ErrCode: "roomNotExists",
+		})
 	}
 }
 

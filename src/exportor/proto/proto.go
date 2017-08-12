@@ -81,13 +81,14 @@ type UserCreateRoomRet struct {
 }
 
 type UserEnterRoom struct {
+	RoomId 		int
 	Test 		string
 }
 
 type UserEnterRoomRet struct {
 	ErrCode 	string
 	Kind 		int			// 1 ergui
-	Data 		[]byte 		//json 字符串
+	Data 		interface{}
 }
 
 type UserMessage struct {
@@ -108,7 +109,7 @@ type UserMessage struct {
 //和上面对应
 type UserMessageRet struct {
 	Cmd 		uint32
-	Msg 		[]byte
+	Msg 		interface{}
 }
 
 type UserCommonError struct {

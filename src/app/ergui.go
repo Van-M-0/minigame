@@ -241,13 +241,22 @@ func newEgHandler(r *erguiRoom) *egHandler {
 
 func (h *egHandler) createRoom(roomId int, user *userInfo, req *proto.UserCreateRoom, conf *proto.ErguiRoomConf) string {
 	h.creator = user.UserId
+
+	type rinfo struct {
+		RoomId 		int
+	}
 	h.sendMessage(&playerInfo{userInfo:user}, proto.CmdUserCreateRoom, &proto.UserCreateRoomRet {
 		ErrCode: "ok",
+		RoomInfo: rinfo{
+			RoomId: roomId,
+		},
 	})
+	/*
 	h.playerList[user.UserId] = &playerInfo{
 		userInfo: user,
 		seat: -1,
 	}
+	*/
 	return "ok"
 }
 
@@ -264,6 +273,7 @@ func (h *egHandler) userEnterRoom(user *userInfo) {
 			ErrCode: "full",
 			Kind: EgKind,
 		})
+		return
 	}
 	h.seatList[p.seat] = p
 	h.playerList[p.UserId] = p
@@ -286,12 +296,12 @@ func (h *egHandler) userEnterRoom(user *userInfo) {
 			Ready: player.ready,
 		})
 	}
-	data, _ := msgpacker.Marshal(enterRes)
 
+	fmt.Println("enter room ", enterRes)
 	h.bcMessage(proto.CmdUserEnterRoom, &proto.UserEnterRoomRet{
 		ErrCode: "ok",
 		Kind: EgKind,
-		Data: data,
+		Data: enterRes,
 	})
 }
 
@@ -314,11 +324,10 @@ func (h *egHandler) userReady(user *userInfo, msg []byte) {
 		Seat: p.seat,
 		Ready: true,
 	}
-	data, _ := msgpacker.Marshal(res)
 
-	h.bcMessage(proto.CmdUserGameMessage, &proto.UserMessage{
+	h.bcMessage(proto.CmdUserGameMessage, &proto.UserMessageRet{
 		Cmd: proto.CmdEgUserReady,
-		Msg: data,
+		Msg: res,
 	})
 
 	cnt := 0
@@ -885,11 +894,11 @@ func marshalData(data interface{}) []byte{
 }
 
 func (h *egHandler) sendGameMessage(p *playerInfo, cmd uint32, data interface{}) {
-	msg := marshalData(data)
-	fmt.Println("send game message ", p.UserId, cmd, string(msg))
+	//msg := marshalData(data)
+	fmt.Println("send game message ", p.UserId, cmd, data)
 	h.sendMessage(p, proto.CmdUserGameMessage, &proto.UserMessageRet{
 		Cmd: cmd,
-		Msg: msg,
+		Msg: data,
 	})
 }
 
