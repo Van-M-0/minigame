@@ -120,7 +120,10 @@ func (mgr *roomMgr) onUserGameMessage(user *userInfo, data []byte) {
 			user: user,
 			data: data,
 		}
+	} else {
+		fmt.Print("user message not in room", user, data)
 	}
+
 }
 
 func (mgr *roomMgr) onUserLeaveRoom(user *userInfo, data []byte) {

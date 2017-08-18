@@ -93,7 +93,7 @@ type UserEnterRoomRet struct {
 
 type UserMessage struct {
 	Cmd 		uint32		// 子命令
-	Msg 		[]byte		// 字符串
+	Msg 		interface{}		// 字符串
 
 	/*
 		准备
@@ -119,6 +119,7 @@ type UserCommonError struct {
 
 type ErguiGameStart struct {
 	Banker 		int
+	CardList 	[]int		//游戏开始，发送手牌
 }
 
 type ErguiCallBanker struct {
@@ -141,7 +142,6 @@ type ErguiCallbankerRet struct {
 	CurBankScore	int			//当前叫庄椅子号
 	CurCallSeat 	int			//当前叫庄分数
 	ToCallSeat 		int			//下一个叫庄以自豪, -1标识结束
-	CardList 		[]byte		//叫庄结束，发送手牌
 }
 
 /*
@@ -161,11 +161,11 @@ type ErguiCallZhuRet struct {
 	ErrCode 		string
 	Color 			int			//主牌颜色
 	BottomSeat 		int			//交换底牌的椅子号
-	BottomCard		[]byte		//底牌数据
+	BottomCard		[]int		//底牌数据
 }
 
 type ErguiChangeCard struct {
-	BottomCard		[]byte		//交换的拍数据
+	BottomCard		[]int		//交换的拍数据
 }
 
 type ErguiChangeCardRet struct {
@@ -173,21 +173,21 @@ type ErguiChangeCardRet struct {
 }
 
 type ErguiFindFriend struct {
-	Card 			byte		//朋友牌
+	Card 			int		//朋友牌
 }
 
 type ErguiFindFriendRet struct {
 	ErrCode 		string
-	Card 			byte		//朋友牌
+	Card 			int		//朋友牌
 }
 
 type ErguiUesrOutCard struct {
-	Card 			byte		//出牌
+	Card 			int		//出牌
 }
 
 type ErguiUserOutCardRet struct {
 	ErrCode 		string
-	Card 			byte		//出的牌
+	Card 			int		//出的牌
 	OutSeat			int			//出牌位置
 	NextSeat 		int			//下个出牌玩家
 	NewRound 		bool		//新一轮
