@@ -84,6 +84,13 @@ func startServer() {
 }
 
 func main() {
+
+	firstCard := 53
+	firstColor := (firstCard & 0xF0) >> 4
+	fmt.Println(firstCard, firstColor, firstColor << 4 + 0x03)
+	minval := firstColor << 4 + 0x03
+	fmt.Println(minval)
+
 	p := os.Args[1]
 	fmt.Println("start args ", p)
 
