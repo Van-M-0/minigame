@@ -905,6 +905,7 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 		maxSeat := h.getMaxScoreSeat()
 		h.computeScore(maxSeat)
 
+		h.leftRoud--
 		if h.leftRoud == 0 {
 			h.finishGame()
 			return
@@ -915,7 +916,6 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 
 		h.curseat = nextFirstSeat
 		h.firstSeat = nextFirstSeat
-		h.leftRoud--
 		h.outcardList = make([]int, EgMaxSeat)
 	}
 
