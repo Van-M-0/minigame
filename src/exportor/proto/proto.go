@@ -170,6 +170,7 @@ type ErguiChangeCard struct {
 
 type ErguiChangeCardRet struct {
 	ErrCode 		string
+	BottomCard		[]int
 }
 
 type ErguiFindFriend struct {
