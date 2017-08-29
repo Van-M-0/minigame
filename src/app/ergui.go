@@ -22,6 +22,7 @@ type erguiRoomReq struct {
 
 type erguiRoom struct {
 	id 			int
+	creator 	int
 	mgr 		*roomMgr
 	reqCh 		chan *erguiRoomReq
 	handler 	*egHandler
@@ -58,6 +59,7 @@ func (eg *erguiRoom) CreateRoom(id int, user *userInfo, req *proto.UserCreateRoo
 	if ret == "ok" {
 		eg.run()
 		eg.id = id
+		eg.creator = user.UserId
 	}
 	return ret
 }
@@ -324,10 +326,12 @@ func (h *egHandler) userEnterRoom(user *userInfo) {
 	}
 
 	type egUserEnter struct {
+		Creator 	int
 		Player 		[]*resEnterUser
 	}
 
 	var enterRes egUserEnter
+	enterRes.Creator = h.room.creator
 	for _, player := range h.playerList {
 		enterRes.Player = append(enterRes.Player, &resEnterUser{
 			userInfo: player.userInfo,
@@ -653,6 +657,7 @@ func (h *egHandler) changeCard(user *userInfo, data []int) {
 
 	h.bcGameMessage(proto.CmdEgChangeCard, &proto.ErguiChangeCardRet{
 		ErrCode: "ok",
+		BottomCard: data,
 	})
 
 	h.status = "friend"
@@ -884,6 +889,7 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 		return
 	}
 
+	/*
 	if p.seat != h.firstSeat {
 		err := h.checkOutCard(p.seat, card)
 		if err != "ok" {
@@ -893,7 +899,7 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 			return
 		}
 	}
-
+*/
 	p.indexs[card]--
 	h.outcardList[p.seat] = card
 
