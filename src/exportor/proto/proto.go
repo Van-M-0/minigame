@@ -193,8 +193,10 @@ type ErguiUserOutCardRet struct {
 	NextSeat 		int			//下个出牌玩家
 	NewRound 		bool		//新一轮
 	FirstSeat		int			//每轮第一次出牌的玩家
+	FriendCard 		bool
 }
 
 type ErguiGameFinish struct {
-
+	ErrCode 		string
+	WinScore 		[]int
 }

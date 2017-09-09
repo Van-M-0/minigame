@@ -853,7 +853,7 @@ func (h *egHandler) computeScore(maxSeat int) {
 }
 
 func (h *egHandler) outCard(user *userInfo, card int) {
-	fmt.Println("user out card ", user, card)
+	fmt.Println("user out card ", user.UserName, card)
 
 	p := h.playerList[user.UserId]
 	if p == nil {
@@ -861,6 +861,7 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 		return
 	}
 
+	fmt.Print("out seat", p.seat, h.curseat, h.leftRoud)
 	if h.status != "outcard" {
 		h.sendGameMessage(p, proto.CmdEgOutCard, &proto.ErguiUserOutCardRet{
 			ErrCode: "notstatus",
@@ -889,6 +890,13 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 		return
 	}
 
+	if h.outcardList[p.seat] != 0 {
+		h.sendGameMessage(p, proto.CmdEgOutCard, &proto.ErguiUserOutCardRet{
+			ErrCode: "already",
+		})
+		return
+	}
+
 	/*
 	if p.seat != h.firstSeat {
 		err := h.checkOutCard(p.seat, card)
@@ -911,8 +919,18 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 		maxSeat := h.getMaxScoreSeat()
 		h.computeScore(maxSeat)
 
+		fmt.Println("left round ", h.leftRoud)
 		h.leftRoud--
+
 		if h.leftRoud == 0 {
+
+			h.bcGameMessage(proto.CmdEgOutCard, &proto.ErguiUserOutCardRet{
+				ErrCode: "ok",
+				Card: card,
+				OutSeat: p.seat,
+				NextSeat: -1,
+			})
+
 			h.finishGame()
 			return
 		}
@@ -925,6 +943,11 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 		h.outcardList = make([]int, EgMaxSeat)
 	}
 
+	fc := false
+	if h.friend == card {
+		fc = true
+	}
+
 	h.bcGameMessage(proto.CmdEgOutCard, &proto.ErguiUserOutCardRet{
 		ErrCode: "ok",
 		Card: card,
@@ -932,6 +955,7 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 		NextSeat: h.curseat,
 		NewRound: newRound,
 		FirstSeat: h.firstSeat,
+		FriendCard: fc,
 	})
 	h.setTimer("outcardtimeout", 10, func() {
 		h.outCard(h.playerList[h.curseat].userInfo, h.getRecommendOutcard())
@@ -951,6 +975,15 @@ func (h *egHandler) finishGame() {
 		winScore[i] = h.scoreList[i] * multiple
 	}
 	fmt.Println("finish game winscore ", winScore)
+
+	h.bcGameMessage(proto.CmdEgGameFinish, &proto.ErguiGameFinish{
+		ErrCode: "ok",
+		WinScore: winScore[:],
+	})
+
+	for _, p := range h.playerList {
+		p.ready = false
+	}
 }
 
 func (h *egHandler) startGame() {
