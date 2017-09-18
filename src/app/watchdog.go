@@ -76,6 +76,7 @@ func (d *watchdog) clientMessage(client defines.ITcpClient, message *proto.Messa
 }
 
 func (d *watchdog) serverMessage(uid uint32, message *proto.Message) {
+
 	d.lb.onServerMessage(uid, message)
 }
 

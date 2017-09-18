@@ -42,10 +42,7 @@ func (eg *erguiRoom) UserOffline(user *userInfo) {
 
 func (eg *erguiRoom) UserReconnect(user *userInfo) {
 	fmt.Println("user reconnect ", user)
-
-
-
-
+	eg.handler.reenter(user)
 }
 
 func (eg *erguiRoom) UserOfflineTimeout(user *userInfo) {
@@ -237,15 +234,17 @@ type egHandler struct {
 	cards 		[]int
 	bottomCard	[]int
 
+	isCalled 	bool
+
 	banker 		int
 	curBanker 	int
+	firstCall	int
+	callRound 	int
 	bankerScore int
 
 	zhuColor 	int
 
-
 	friend		int
-
 
 	firstSeat 	int
 	firstCard 	int
@@ -349,6 +348,94 @@ func (h *egHandler) userEnterRoom(user *userInfo) {
 	})
 }
 
+func (h *egHandler) reenter(user *userInfo) {
+
+	if p, ok := h.playerList[user.UserId]; !ok {
+		fmt.Println("user reenter not exists ??? ", user, p)
+		return
+	} else {
+		p.Cid = user.Cid
+	}
+
+	type reenterPlayer struct {
+		*userInfo
+		Ready 		bool
+		Seat 		int
+		HandCard	[]int
+		CallScore 	int
+	}
+
+	type reenterRes struct {
+		Status 		string
+		RenterUser 	int
+		Players 	map[int]*reenterPlayer
+
+		BottomCard	[]int
+
+		Banker 		int
+		CurBanker 	int
+		FirstCall	int
+		BankerScore int
+
+		ZhuColor 	int
+		Friend		int
+
+		FirstSeat 	int
+		FirstCard 	int
+		Curseat 	int
+
+		OutcardList []int
+
+		ScoreList 	[]int
+	}
+
+	ret := &reenterRes{
+		Players: make(map[int]*reenterPlayer),
+	}
+	for _, p := range h.playerList {
+		rp := &reenterPlayer{
+			userInfo: p.userInfo,
+			Ready: p.ready,
+			Seat: p.seat,
+			HandCard: p.handCard,
+			CallScore: p.callScore,
+		}
+		ret.Players[p.UserId] = rp
+	}
+
+	ret.Status = h.status
+	ret.RenterUser = user.UserId
+	ret.BottomCard = h.bottomCard
+	ret.Banker = h.banker
+	ret.CurBanker = h.curBanker
+	ret.FirstCall = h.firstCall
+	ret.BankerScore = h.bankerScore
+	ret.ZhuColor = h.zhuColor
+	ret.Friend = h.friend
+	ret.FirstSeat = h.firstSeat
+	ret.FirstCard = h.firstCard
+	ret.Curseat = h.curseat
+	ret.OutcardList = h.outcardList
+	ret.ScoreList = h.scoreList
+
+	ret1 := &reenterRes{
+		Status: h.status,
+		RenterUser: user.UserId,
+	}
+
+	for i := 0; i < EgMaxSeat; i++ {
+		p := h.playerList[i]
+		if p == nil {
+			continue
+		}
+		if p.UserId == user.UserId {
+			h.sendGameMessage(p, proto.CmdEgReEnter, ret)
+		} else {
+			h.sendGameMessage(p, proto.CmdEgReEnter, ret1)
+		}
+	}
+}
+
 func (h *egHandler) userReady(user *userInfo, msg interface{}) {
 
 	fmt.Println("user ready data ", msg)
@@ -420,24 +507,49 @@ func (h *egHandler) callScore(user *userInfo, score int) {
 		return
 	}
 
-	for _, p := range h.playerList {
-		if p.callScore != 0 && score <= p.callScore {
-			h.sendGameMessage(p, proto.CmdEgUserCallBanker, &proto.ErguiCallbankerRet{
-				ErrCode: "small",
-			})
-			return
+	//第一轮不能喊钩
+	if h.callRound == 0 && score == BANKER_SCORE_100_GOU {
+		h.sendGameMessage(p, proto.CmdEgUserCallBanker, &proto.ErguiCallbankerRet{
+			ErrCode: "firstgou",
+		})
+		return
+	}
+
+	//第一个玩家不能喊过
+	if h.isCalled == false && score == BANKER_SCORE_NO {
+		h.sendGameMessage(p, proto.CmdEgUserCallBanker, &proto.ErguiCallbankerRet{
+			ErrCode: "firstno",
+		})
+		return
+	}
+	h.isCalled = true
+
+	// 没有喊过，必须比当前所有喊分的大
+	if score != BANKER_SCORE_NO {
+		for _, p := range h.playerList {
+			if p.callScore != 0 && score <= p.callScore {
+				h.sendGameMessage(p, proto.CmdEgUserCallBanker, &proto.ErguiCallbankerRet{
+					ErrCode: "small",
+				})
+				return
+			}
 		}
 	}
 
 	h.killTimer()
 	p.callScore = score
 
-	if score == BANKER_SCORE_100_GOU {
+	if  score == BANKER_SCORE_100_GOU {
 		h.banker = h.curBanker
 		h.bankerScore = score
 	} else {
 		nextBanker := (h.curBanker + 1) % EgMaxSeat
+		if h.firstCall == nextBanker {
+			h.callRound++
+		}
 		nextp := h.seatList[nextBanker]
+
+		//没有叫过分
 		if nextp.callScore == BANKER_SCORE_DEFAULT {
 			h.curBanker = nextBanker
 			h.bcGameMessage(proto.CmdEgUserCallBanker, &proto.ErguiCallbankerRet{
@@ -459,11 +571,6 @@ func (h *egHandler) callScore(user *userInfo, score int) {
 			}
 
 			if count == 1 {
-				for _, p := range h.playerList {
-					if p.callScore != BANKER_SCORE_NO {
-						count++
-					}
-				}
 				h.banker = p.seat
 				h.bankerScore = p.callScore
 			} else {
@@ -754,7 +861,6 @@ func (h *egHandler) checkOutCard(seat int, card int) string {
 			if p.indexs[i] != 0  && zhuCardBox[i] != 0 {
 				return true
 			}
-
 		}
 		return false
 	}
@@ -818,20 +924,30 @@ func (h *egHandler) checkOutCard(seat int, card int) string {
 
 func (h *egHandler) getMaxScoreSeat() int {
 	scoreList := [EgMaxSeat]int{}
-	firstColor := h.firstCard & 0xF0
+	firstColor := (h.firstCard & 0xF0) >> 4
 
 	for i := 0; i < EgMaxSeat; i++ {
 		card := h.outcardList[i]
-		color := card & 0xF0
+		color := (card & 0xF0) >> 4
 		val := int(card & 0x0F)
-		if color == 0x40 {
-			val += 10000
+		score := 0
+		if color == 0x40 { //鬼牌
+			score += 10000
+			if val == 4 {	//大		15000
+				score += 5000
+			} else if val == 3 { //小	13000
+				score += 3000
+			}
 		} else if color == h.zhuColor {
-			val += 1000
+			score += 1000		// 主牌颜色	1000
+			if val == 2 {
+				score += 500	// 主牌颜色+主牌 1500
+			}
 		} else if int(color) == firstColor {
-			val += 100
+			score += 100			// 和第一家牌相同	100
+			score += val 			// 103 - 10x
 		}
-		scoreList[i] = val
+		scoreList[i] = score
 	}
 
 	maxSeat := 0
@@ -839,6 +955,7 @@ func (h *egHandler) getMaxScoreSeat() int {
 	for i := 1; i < EgMaxSeat; i++ {
 		if scoreList[i] > maxVal {
 			maxVal = scoreList[i]
+			maxSeat = i
 		}
 	}
 
@@ -889,7 +1006,6 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 		return
 	}
 
-	/*
 	if p.seat != h.firstSeat {
 		err := h.checkOutCard(p.seat, card)
 		if err != "ok" {
@@ -899,7 +1015,7 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 			return
 		}
 	}
-*/
+
 	p.indexs[card]--
 	h.outcardList[p.seat] = card
 
@@ -913,6 +1029,12 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 
 		h.leftRoud--
 		if h.leftRoud == 0 {
+			h.bcGameMessage(proto.CmdEgOutCard, &proto.ErguiUserOutCardRet{
+				ErrCode: "ok",
+				Card: card,
+				OutSeat: p.seat,
+				NextSeat: -1,
+			})
 			h.finishGame()
 			return
 		}
@@ -932,6 +1054,7 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 		NextSeat: h.curseat,
 		NewRound: newRound,
 		FirstSeat: h.firstSeat,
+		Score: h.scoreList,
 	})
 	h.setTimer("outcardtimeout", 10, func() {
 		h.outCard(h.playerList[h.curseat].userInfo, h.getRecommendOutcard())
@@ -939,6 +1062,7 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 }
 
 func (h *egHandler) finishGame() {
+	h.status = "finish"
 	multiple := 1
 	if h.bankerScore == BANKER_SCORE_100_BAO {
 		multiple = 4
@@ -976,12 +1100,14 @@ func (h *egHandler) startGame() {
 	}
 	//h.curBanker = (h.banker + 1) % EgMaxSeat
 	h.curBanker = h.banker
+	h.firstCall = h.curBanker
 
 	h.setTimer("callbankerTimeout", 10, func() {
 		h.callScore(h.playerList[h.curBanker].userInfo, BANKER_SCORE_NO)
 	})
 
 	h.status = "call"
+	h.scoreList = make([]int, EgMaxSeat)
 
 	for _, p := range h.playerList {
 		cl := make([]int, len(p.handCard))

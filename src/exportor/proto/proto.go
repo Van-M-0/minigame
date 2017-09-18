@@ -40,6 +40,7 @@ const (
 		CmdEgFindFriend		= 6
 		CmdEgOutCard		= 7
 		CmdEgGameFinish		= 8
+		CmdEgReEnter		= 9
 )
 
 type Message struct {
@@ -193,6 +194,7 @@ type ErguiUserOutCardRet struct {
 	NextSeat 		int			//下个出牌玩家
 	NewRound 		bool		//新一轮
 	FirstSeat		int			//每轮第一次出牌的玩家
+	Score 			[]int 		//每一轮得分
 }
 
 type ErguiGameFinish struct {

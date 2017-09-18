@@ -123,12 +123,13 @@ func (lb *lobby) onUserLogin(uid uint32, data []byte) {
 		lb.onDbMessage(func() {
 			if err == 0 {
 				var uu *userInfo
+				reenter := false
 				if u1, ok := lb.users[int(u.Userid)]; ok {
 					delete(lb.uidUsers, u1.Cid)
 					u1.Cid = uid
 					lb.uidUsers[uid] = u1
-					lb.roomMgr.onUserReconnect(u1)
 					fmt.Println("lb user reconneted", u1)
+					reenter = true
 					uu = u1
 				} else {
 					uu = &userInfo{
@@ -148,6 +149,9 @@ func (lb *lobby) onUserLogin(uid uint32, data []byte) {
 					ErrCode: "ok",
 					User: uu,
 				})
+				if reenter {
+					lb.roomMgr.onUserReconnect(uu)
+				}
 			} else {
 				lb.dog.sendClientMessage(uid, proto.CmdUserLogin, &proto.UserLoginRet{
 					ErrCode: "error",
