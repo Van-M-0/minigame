@@ -205,7 +205,7 @@ func dbRequest(fn func()) {
 	}
 }
 
-func dbLobbyUserLogin(account string, cb func(accounts *T_Accounts, users *T_Users, err int)) {
+func dbLobbyUserLogin(account, name, headimg string, sex uint8, cb func(accounts *T_Accounts, users *T_Users, err int)) {
 	dbRequest(func() {
 		var acc T_Accounts
 		var user T_Users
@@ -220,8 +220,9 @@ func dbLobbyUserLogin(account string, cb func(accounts *T_Accounts, users *T_Use
 			})
 			db.AddUserInfo(&T_Users{
 				Account: account,
-				Name: "guest_"+account,
-				Sex: 1,
+				Name: name,
+				Sex: uint8(sex),
+				Headimg: headimg,
 			})
 			ok = db.GetAccountInfo(account, &acc)
 			db.GetUserInfo(account, &user)
@@ -234,4 +235,9 @@ func dbLobbyUserLogin(account string, cb func(accounts *T_Accounts, users *T_Use
 	})
 }
 
+func dbCheckConnection() {
+	dbRequest(func() {
+		fmt.Println("db checking ...")
+	})
+}
 

@@ -26,6 +26,7 @@ func (server *tcpServer) Start() error {
 	if err != nil {
 		return err
 	}
+	fmt.Println("listening : ", l.Addr())
 	defer func() {
 		l.Close()
 	}()
@@ -34,6 +35,7 @@ func (server *tcpServer) Start() error {
 			//fmt.Println("server start ", server.opt.Host)
 			conn, err := l.Accept()
 			//fmt.Println("server start ", server.opt.Host, conn, err)
+			fmt.Println("accept client ", conn.RemoteAddr(), conn.LocalAddr())
 			if err != nil {
 				continue
 			}

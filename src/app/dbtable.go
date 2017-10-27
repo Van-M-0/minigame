@@ -64,8 +64,8 @@ type T_RoomUser struct {
 
 type T_Users struct {
 	Userid 		uint32		`gorm:"primary_key;AUTO_INCREMENT;not null"`
-	Account 	string 		`gorm:"size:32;not null;default:'';index:acc_index"`
-	Name 		string 		`gorm:"size:32;default:null"`
+	Account 	string 		`gorm:"not null;default:'';index:acc_index"`
+	Name 		string 		`gorm:"default:null"`
 	Sex 		uint8
 	Headimg 	string
 	Level 		uint8 		`gorm:"default:1"`

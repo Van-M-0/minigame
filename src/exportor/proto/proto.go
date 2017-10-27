@@ -30,6 +30,8 @@ const (
 
 	CmdCommonError 		= 10
 
+	CmdWechatLoginAccess = 11
+
 	CmdUserGameMessage  = 20
 
 		CmdEgUserReady		= 1
@@ -59,21 +61,38 @@ type UserWeChatLogin struct {
 }
 
 type UserLogin struct {
+	LoginType	string
 	Account 	string
+	WechatCode 	string
+}
+
+type wechatLogin struct {
+	Err 		string
+	Uid 		uint32
+	OpenId 		string
+	Token 		string
 }
 
 type UserLoginRet struct {
 	ErrCode 	string
+	LoginType 	string
 	User 		interface{}
 }
 
 type ErguiRoomConf struct {
-	A 		int
+	GameType 	int
+	Score 		int
+	Round 		int
 }
 
 type UserCreateRoom struct {
 	Kind 		int				// 1 ergui
-	Conf 		[]byte			// 必须是字符串
+
+	//Conf 		interface{}			// 必须是字符串
+
+	GameType 	int
+	Score 		int
+	Round 		int
 }
 
 type UserCreateRoomRet struct {
@@ -121,6 +140,7 @@ type UserCommonError struct {
 type ErguiGameStart struct {
 	Banker 		int
 	CardList 	[]int		//游戏开始，发送手牌
+	CurRound 	int
 }
 
 type ErguiCallBanker struct {
@@ -194,9 +214,17 @@ type ErguiUserOutCardRet struct {
 	NextSeat 		int			//下个出牌玩家
 	NewRound 		bool		//新一轮
 	FirstSeat		int			//每轮第一次出牌的玩家
+	FriendCard 		bool
 	Score 			[]int 		//每一轮得分
 }
 
 type ErguiGameFinish struct {
-
+	ErrCode 		string
+	BankerBaoChang	bool		//庄家是否包场
+	GuangTou		bool		//闲家是否光头
+	BankerIsFriend	bool		//庄家是否喊自己为朋友
+	GameScore		[]int		//本轮游戏得分
+	XiQianMoney		[]float32	//洗钱
+	WinMoney 		[]float32	//本轮游戏获得钱
+	TotalWinMoney	[]float32	//大局结算获得钱
 }

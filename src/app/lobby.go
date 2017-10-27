@@ -16,6 +16,7 @@ type userInfo struct {
 	Account 	string
 	UserId 		int
 	UserName 	string
+	HeadImg 	string
 	Sex 		uint8
 	RoomCard 	int
 	RoomId 		int
@@ -29,6 +30,7 @@ type lobby struct {
 	users 		map[int]*userInfo
 	uidUsers 	map[uint32]*userInfo
 	roomMgr 	*roomMgr
+	hp 			*httpServer
 }
 
 func newLobby(dog *watchdog) *lobby {
@@ -38,11 +40,14 @@ func newLobby(dog *watchdog) *lobby {
 	lb.uidUsers = make(map[uint32]*userInfo)
 	lb.dog = dog
 	lb.roomMgr = newRoomMgr(lb)
+	lb.hp = newHttpServer()
 	return lb
 }
 
 func (lb *lobby) start() {
+	dbCheckConnection()
 	lb.handleReq()
+	lb.hp.start()
 }
 
 func (lb *lobby) close() {
@@ -118,48 +123,84 @@ func (lb *lobby) onUserLogin(uid uint32, data []byte) {
 	var req proto.UserLogin
 	msgpacker.UnMarshal(data, &req)
 
-	fmt.Println("handle user login ", req)
-	dbLobbyUserLogin(req.Account, func(acc *T_Accounts, u *T_Users ,err int) {
-		lb.onDbMessage(func() {
-			if err == 0 {
-				var uu *userInfo
-				reenter := false
-				if u1, ok := lb.users[int(u.Userid)]; ok {
-					delete(lb.uidUsers, u1.Cid)
-					u1.Cid = uid
-					lb.uidUsers[uid] = u1
-					fmt.Println("lb user reconneted", u1)
-					reenter = true
-					uu = u1
-				} else {
-					uu = &userInfo{
-						Cid: uid,
-						Account: u.Account,
-						UserId: int(u.Userid),
-						UserName: u.Name,
-						Sex: u.Sex,
-						RoomCard: int(u.Roomcard),
-						RoomId: int(u.Roomid),
-						Coins: int(u.Coins),
+	var errCode, acc, token, nickName, headImg string
+	var sex int
+
+	loginHandler := func() {
+		fmt.Println("handle user login ", req)
+		dbLobbyUserLogin(acc, nickName, headImg, uint8(sex), func(acc *T_Accounts, u *T_Users ,err int) {
+			lb.onDbMessage(func() {
+				if err == 0 {
+					var uu *userInfo
+					reenter := false
+					if u1, ok := lb.users[int(u.Userid)]; ok {
+						delete(lb.uidUsers, u1.Cid)
+						u1.Cid = uid
+						lb.uidUsers[uid] = u1
+						fmt.Println("lb user reconneted", u1)
+						reenter = true
+						uu = u1
+					} else {
+						uu = &userInfo{
+							Cid: uid,
+							Account: u.Account,
+							UserId: int(u.Userid),
+							UserName: u.Name,
+							HeadImg: u.Headimg,
+							Sex: u.Sex,
+							RoomCard: int(u.Roomcard),
+							RoomId: int(u.Roomid),
+							Coins: int(u.Coins),
+						}
+						lb.users[uu.UserId] = uu
+						lb.uidUsers[uid] = uu
 					}
-					lb.users[uu.UserId] = uu
-					lb.uidUsers[uid] = uu
+					lb.dog.sendClientMessage(uid, proto.CmdUserLogin, &proto.UserLoginRet{
+						ErrCode: "ok",
+						LoginType: req.LoginType,
+						User: uu,
+					})
+					if reenter {
+						lb.roomMgr.onUserReconnect(uu)
+					}
+				} else {
+					lb.dog.sendClientMessage(uid, proto.CmdUserLogin, &proto.UserLoginRet{
+						ErrCode: "error",
+						LoginType: req.LoginType,
+					})
 				}
-				lb.dog.sendClientMessage(uid, proto.CmdUserLogin, &proto.UserLoginRet{
-					ErrCode: "ok",
-					User: uu,
-				})
-				if reenter {
-					lb.roomMgr.onUserReconnect(uu)
+			})
+		})
+	}
+
+
+	if req.LoginType == "wechat" {
+		go func() {
+			errCode, acc, token, nickName, headImg, sex = lb.hp.wechatLogin(req.WechatCode)
+			fmt.Println("wechat userinfo ", acc, token, nickName, headImg, sex)
+			if errCode == "ok" {
+				lb.reqChn <- &lbRequest{
+					req: func() {
+						loginHandler()
+					},
 				}
 			} else {
 				lb.dog.sendClientMessage(uid, proto.CmdUserLogin, &proto.UserLoginRet{
-					ErrCode: "error",
+					LoginType: req.LoginType,
+					ErrCode: errCode,
 				})
 			}
-		})
-	})
+		}()
+	} else if req.LoginType == "guest" {
+		acc = req.Account
+		nickName = "guest_" + acc
+		headImg = ""
+		sex = 1
+		loginHandler()
+	}
 }
+
+
 
 func (lb *lobby) onUserLogout(uid uint32) {
 

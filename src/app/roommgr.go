@@ -74,7 +74,7 @@ func (mgr *roomMgr) onUserCreateRoom(user *userInfo, data []byte) {
 		})
 	}
 
-	ret := room.CreateRoom(id, user, &req, req.Conf)
+	ret := room.CreateRoom(id, user, &req)
 	if ret != "ok" {
 		mgr.lb.dog.sendClientMessage(user.Cid ,proto.CmdUserCreateRoom, &proto.UserCreateRoomRet{
 			ErrCode: ret,
@@ -83,7 +83,17 @@ func (mgr *roomMgr) onUserCreateRoom(user *userInfo, data []byte) {
 		mgr.rooms[id] = room
 		user.RoomId = id
 	}
+}
 
+func (mgr *roomMgr) releaseRoom(id int) {
+	if r, ok := mgr.rooms[id]; ok {
+		delete(mgr.rooms, id)
+		r.reqCh <- &erguiRoomReq{
+			cmd: "js",
+		}
+	} else {
+		fmt.Println("release room error ", id)
+	}
 }
 
 func (mgr *roomMgr) onUserEnterRoom(user *userInfo, data []byte) {

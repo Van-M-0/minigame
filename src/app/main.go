@@ -8,11 +8,14 @@ import (
 	"fmt"
 	"sync"
 	"msgpacker"
+	"os/exec"
+	"path/filepath"
+	"mylog"
 )
 
 func startClient() {
 	c := network.NewTcpClient(&defines.NetClientOption{
-		Host: ":9890",
+		Host: "119.23.239.108:9890",
 		ConnectCb: func(client defines.ITcpClient) error {
 			return nil
 		},
@@ -27,7 +30,7 @@ func startClient() {
 				if res.ErrCode == "ok" {
 					client.Send(proto.CmdUserCreateRoom, &proto.UserCreateRoom{
 						Kind: 1,
-						Conf: []byte(`{"A":1}`),
+						//Conf: []byte(`{"A":1}`),
 					})
 				}
 			} else if message.Cmd == proto.CmdUserCreateRoom {
@@ -69,7 +72,6 @@ func startClient() {
 }
 
 func startServer() {
-	hp := newHttpServer()
 	wd := newWatchdog()
 	gw := network.NewTcpServer(&defines.NetServerOption{
 		Host: ":9890",
@@ -78,18 +80,48 @@ func startServer() {
 		MsgCb: wd.clientMessage,
 		AuthCb: wd.clientAuth,
 	})
-	hp.start()
 	wd.start()
 	gw.Start()
 }
 
 func main() {
 
-	firstCard := 53
-	firstColor := (firstCard & 0xF0) >> 4
-	fmt.Println(firstCard, firstColor, firstColor << 4 + 0x03)
-	minval := firstColor << 4 + 0x03
-	fmt.Println(minval)
+	file, err := exec.LookPath(os.Args[0])
+	if err != nil {
+		panic(fmt.Errorf("get exe path err %v", err).Error())
+	}
+	path, err := filepath.Abs(file)
+	if err != nil {
+		panic(fmt.Errorf("get file path err %v", err).Error())
+	}
+	dir, _ := filepath.Split(path)
+
+
+	//logdir := workdir + "log" + ts + "/"
+	logdir := dir + "log" + "/"
+	logfile := logdir + "game.log"
+
+	/*
+	if err := os.Mkdir(logdir, os.ModePerm); err != nil {
+		fmt.Println("create dir failed ", logdir)
+	}
+	*/
+
+	if true {
+		file, err := os.OpenFile(logfile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
+		fmt.Println("open file ", file, logfile)
+		if err == nil {
+			mylog.SetOutput(file)
+			mylog.SetLevel(mylog.DebugLevel)
+			mylog.SetFormatter(new(mylog.GameFormatter))
+		} else {
+			fmt.Println("Failed to log to file, using default stderr", err)
+			return
+		}
+
+		mylog.Infoln("start programa")
+	}
+
 
 	p := os.Args[1]
 	fmt.Println("start args ", p)
