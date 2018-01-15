@@ -6,11 +6,13 @@ import (
 	"exportor/proto"
 	"os"
 	"fmt"
-	"sync"
 	"msgpacker"
 	"os/exec"
 	"path/filepath"
 	"mylog"
+	"os/signal"
+	"math/rand"
+	"time"
 )
 
 func startClient() {
@@ -26,7 +28,7 @@ func startClient() {
 			if message.Cmd == proto.CmdUserLogin {
 				var res proto.UserLoginRet
 				msgpacker.UnMarshal(message.Msg, &res)
-				fmt.Println("client login res ", res)
+				mylog.Infoln("client login res ", res)
 				if res.ErrCode == "ok" {
 					client.Send(proto.CmdUserCreateRoom, &proto.UserCreateRoom{
 						Kind: 1,
@@ -36,7 +38,7 @@ func startClient() {
 			} else if message.Cmd == proto.CmdUserCreateRoom {
 				var res proto.UserCreateRoomRet
 				msgpacker.UnMarshal(message.Msg, &res)
-				fmt.Println("client create room ret ", res)
+				mylog.Infoln("client create room ret ", res)
 				if res.ErrCode == "ok" {
 					client.Send(proto.CmdUserEnterRoom, &proto.UserEnterRoom{
 						RoomId: 799523,
@@ -46,7 +48,7 @@ func startClient() {
 			} else if message.Cmd == proto.CmdUserEnterRoom {
 				var res proto.UserEnterRoomRet
 				msgpacker.UnMarshal(message.Msg, &res)
-				fmt.Println("client enter room ret ", res)
+				mylog.Infoln("client enter room ret ", res)
 				if res.ErrCode == "ok" {
 					client.Send(proto.CmdUserGameMessage, &proto.UserMessage{
 						Cmd: 1,
@@ -55,7 +57,7 @@ func startClient() {
 			} else if message.Cmd == proto.CmdUserGameMessage {
 				var res proto.UserMessageRet
 				msgpacker.UnMarshal(message.Msg, &res)
-				fmt.Println("game message ", res, res.Msg)
+				mylog.Infoln("game message ", res, res.Msg)
 				if res.Cmd == proto.CmdEgUserReady {
 
 				}
@@ -81,10 +83,11 @@ func startServer() {
 		AuthCb: wd.clientAuth,
 	})
 	wd.start()
-	gw.Start()
+	go gw.Start()
 }
 
 func main() {
+	rand.Seed(time.Now().Unix())
 
 	file, err := exec.LookPath(os.Args[0])
 	if err != nil {
@@ -98,24 +101,24 @@ func main() {
 
 
 	//logdir := workdir + "log" + ts + "/"
-	logdir := dir + "log" + "/"
+	logdir := dir
 	logfile := logdir + "game.log"
 
 	/*
 	if err := os.Mkdir(logdir, os.ModePerm); err != nil {
-		fmt.Println("create dir failed ", logdir)
+		mylog.Infoln("create dir failed ", logdir)
 	}
 	*/
 
 	if true {
 		file, err := os.OpenFile(logfile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0666)
-		fmt.Println("open file ", file, logfile)
+		mylog.Infoln("open file ", file, logfile)
 		if err == nil {
 			mylog.SetOutput(file)
 			mylog.SetLevel(mylog.DebugLevel)
 			mylog.SetFormatter(new(mylog.GameFormatter))
 		} else {
-			fmt.Println("Failed to log to file, using default stderr", err)
+			mylog.Infoln("Failed to log to file, using default stderr", err)
 			return
 		}
 
@@ -124,7 +127,7 @@ func main() {
 
 
 	p := os.Args[1]
-	fmt.Println("start args ", p)
+	mylog.Infoln("start args ", p)
 
 	if p == "client" {
 		startClient()
@@ -132,7 +135,12 @@ func main() {
 		startServer()
 	}
 
-	wg := new(sync.WaitGroup)
-	wg.Add(1)
-	wg.Wait()
+	mylog.Info("wait stop")
+	signalChan := make(chan os.Signal, 1)
+	defer close(signalChan)
+
+	signal.Notify(signalChan, os.Kill, os.Interrupt)
+	s := <-signalChan
+	signal.Stop(signalChan)
+	mylog.Info(s.String())
 }

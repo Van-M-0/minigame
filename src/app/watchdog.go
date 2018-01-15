@@ -3,8 +3,9 @@ package main
 import (
 	"exportor/defines"
 	"exportor/proto"
-	"fmt"
 	"sync"
+	"mylog"
+	"time"
 )
 
 type connection struct {
@@ -26,30 +27,30 @@ func newWatchdog() *watchdog {
 }
 
 func (d *watchdog) clientConnect(client defines.ITcpClient) error {
-	fmt.Println("client conencted")
+	mylog.Infoln("client conencted")
 	return nil
 }
 
 func (d *watchdog) clientDisconnect(client defines.ITcpClient) {
-	fmt.Println("client disconnected")
+	mylog.Infoln("client disconnected")
 	iuid := client.Get("uid")
 	if iuid == nil {
-		fmt.Println("client uid not extis")
+		mylog.Infoln("client uid not extis")
 		return
 	}
 	d.cliLock.Lock()
 	defer d.cliLock.Unlock()
 	uid := iuid.(uint32)
 	if _, ok := d.clients[uid]; !ok {
-		fmt.Println("client not eixts dis", uid)
+		mylog.Infoln("client not eixts dis", uid)
 		return
 	}
 	d.lb.onUserOffline(uid)
-	fmt.Println("client disconnected")
+	mylog.Infoln("client disconnected")
 }
 
 func (d *watchdog) clientAuth(client defines.ITcpClient) error {
-	fmt.Println("client auth")
+	mylog.Infoln("client auth")
 	d.cliLock.Lock()
 	d.cliIdGen++
 	id := d.cliIdGen + 1
@@ -64,14 +65,30 @@ func (d *watchdog) clientAuth(client defines.ITcpClient) error {
 func (d *watchdog) clientMessage(client defines.ITcpClient, message *proto.Message) {
 	iuid := client.Get("uid")
 	if iuid == nil {
-		fmt.Println("client uid not extis")
+		mylog.Infoln("client uid not extis")
 		return
 	}
 	uid := iuid.(uint32)
 	if _, ok := d.clients[uid]; !ok {
-		fmt.Println("client not eixts msg ", uid)
+		mylog.Infoln("client not eixts msg ", uid)
 		return
 	}
+
+	alive := client.Get("alive")
+	if alive == nil {
+		client.Set("alive", time.Now().Unix())
+		alive = client.Get("alive")
+	}
+
+	if message.Cmd == proto.CmdHeartBeat {
+		lt, _  := alive.(int64)
+		if lt + 5 < time.Now().Unix() {
+			client.Set("alive", time.Now().Unix())
+			client.Send(message.Cmd, message.Msg)
+		}
+		return
+	}
+
 	d.lb.onUserMessage(uid, message)
 }
 
@@ -85,7 +102,7 @@ func (d *watchdog) sendClientMessage(uid uint32, cmd uint32, data interface{}) {
 	if ok {
 		cli.Send(cmd, data)
 	} else {
-		fmt.Println("client not exits send", uid)
+		mylog.Infoln("client not exits send", uid)
 	}
 	d.cliLock.Unlock()
 }
@@ -96,7 +113,7 @@ func (d *watchdog) bcClientMessage(uids []uint32, cmd uint32, data interface{}) 
 		if cli, ok := d.clients[uid]; ok {
 			cli.Send(cmd, data)
 		} else {
-			fmt.Println("client not exits bc", uid)
+			mylog.Infoln("client not exits bc", uid)
 		}
 	}
 	d.cliLock.Unlock()

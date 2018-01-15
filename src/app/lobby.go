@@ -3,8 +3,10 @@ package main
 import (
 	"exportor/proto"
 	"msgpacker"
-	"fmt"
 	"time"
+	"mylog"
+	"math/rand"
+	"strconv"
 )
 
 type lbRequest struct {
@@ -40,14 +42,14 @@ func newLobby(dog *watchdog) *lobby {
 	lb.uidUsers = make(map[uint32]*userInfo)
 	lb.dog = dog
 	lb.roomMgr = newRoomMgr(lb)
-	lb.hp = newHttpServer()
+	lb.hp = newHttpServer(lb)
 	return lb
 }
 
 func (lb *lobby) start() {
+	lb.hp.start()
 	dbCheckConnection()
 	lb.handleReq()
-	lb.hp.start()
 }
 
 func (lb *lobby) close() {
@@ -74,13 +76,13 @@ func (lb *lobby) onUserMessage(uid uint32, message *proto.Message) {
 				lb.onUserLogout(uid)
 			} else {
 				if user, ok := lb.uidUsers[uid]; !ok {
-					fmt.Println("******** user not in *********", message.Cmd)
+					mylog.Infoln("******** user not in *********", message.Cmd)
 					lb.dog.sendClientMessage(uid, proto.CmdCommonError, &proto.UserCommonError{
 						Cmd: message.Cmd,
 						ErrCode: "userNotIn",
 					})
 				} else {
-					fmt.Println("-------- user message -------", message.Cmd, user)
+					mylog.Infoln("-------- user message -------", message.Cmd, user)
 					lb.roomMgr.onMessage(user, message.Cmd, message.Msg)
 				}
 			}
@@ -115,6 +117,14 @@ func (lb *lobby) onDbMessage(fn func()) {
 	}
 }
 
+func (lb *lobby) onDebug(room int, w, r interface {}) {
+	lb.reqChn <- &lbRequest{
+		req: func(){
+			lb.roomMgr.onDebug(room , w, r)
+		},
+	}
+}
+
 func (lb *lobby) onUserWechatLogin(uid uint32, data []byte) {
 
 }
@@ -127,20 +137,18 @@ func (lb *lobby) onUserLogin(uid uint32, data []byte) {
 	var sex int
 
 	loginHandler := func() {
-		fmt.Println("handle user login ", req)
+		mylog.Infoln("handle user login ", req)
 		dbLobbyUserLogin(acc, nickName, headImg, uint8(sex), func(acc *T_Accounts, u *T_Users ,err int) {
 			lb.onDbMessage(func() {
 				if err == 0 {
 					var uu *userInfo
-					reenter := false
 					if u1, ok := lb.users[int(u.Userid)]; ok {
 						delete(lb.uidUsers, u1.Cid)
 						u1.Cid = uid
 						lb.uidUsers[uid] = u1
-						fmt.Println("lb user reconneted", u1)
-						reenter = true
+						mylog.Infoln("lb user reconneted", u1)
 						uu = u1
-					} else {
+					} else if u.Userid != 0 {
 						uu = &userInfo{
 							Cid: uid,
 							Account: u.Account,
@@ -154,15 +162,19 @@ func (lb *lobby) onUserLogin(uid uint32, data []byte) {
 						}
 						lb.users[uu.UserId] = uu
 						lb.uidUsers[uid] = uu
+					} else {
+						lb.dog.sendClientMessage(uid, proto.CmdUserLogin, &proto.UserLoginRet{
+							ErrCode: "logintotry",
+							LoginType: req.LoginType,
+						})
+						return
 					}
 					lb.dog.sendClientMessage(uid, proto.CmdUserLogin, &proto.UserLoginRet{
 						ErrCode: "ok",
 						LoginType: req.LoginType,
 						User: uu,
 					})
-					if reenter {
-						lb.roomMgr.onUserReconnect(uu)
-					}
+					lb.afterLogin(uu)
 				} else {
 					lb.dog.sendClientMessage(uid, proto.CmdUserLogin, &proto.UserLoginRet{
 						ErrCode: "error",
@@ -177,7 +189,7 @@ func (lb *lobby) onUserLogin(uid uint32, data []byte) {
 	if req.LoginType == "wechat" {
 		go func() {
 			errCode, acc, token, nickName, headImg, sex = lb.hp.wechatLogin(req.WechatCode)
-			fmt.Println("wechat userinfo ", acc, token, nickName, headImg, sex)
+			mylog.Infoln("wechat userinfo ", acc, token, nickName, headImg, sex)
 			if errCode == "ok" {
 				lb.reqChn <- &lbRequest{
 					req: func() {
@@ -194,8 +206,9 @@ func (lb *lobby) onUserLogin(uid uint32, data []byte) {
 	} else if req.LoginType == "guest" {
 		acc = req.Account
 		nickName = "guest_" + acc
-		headImg = ""
-		sex = 1
+		sex = rand.Intn(2) + 1
+		headId := rand.Intn(3) + 1
+		headImg = strconv.Itoa(headId)
 		loginHandler()
 	}
 }
@@ -207,3 +220,25 @@ func (lb *lobby) onUserLogout(uid uint32) {
 }
 
 
+func (lb *lobby) afterLogin(user *userInfo) {
+	type noticeList struct {
+		NoticeList 	[]*proto.LobbyNotice
+	}
+
+	nsl := &noticeList{
+		NoticeList: []*proto.LobbyNotice {
+			{
+				Content: "跑马灯1 bbbbbbbb",
+				RepeatCount: 3,
+				Duration: 10,
+			},
+			{
+				Content: "跑马灯2 aaaaaaa",
+				RepeatCount: -1,
+				Duration: 30,
+			},
+		},
+	}
+
+	lb.dog.sendClientMessage(user.Cid, proto.CmdNotice, nsl)
+}

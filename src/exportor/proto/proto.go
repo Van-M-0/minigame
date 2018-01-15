@@ -1,5 +1,7 @@
 package proto
 
+import "time"
+
 /*
 	1. 服务器的端口号 9090
 
@@ -16,6 +18,7 @@ package proto
 
 
 const (
+	CmdHeartBeat 		= 100
 	CmdWechatLogin 		= 1
 	CmdUserLogin 		= 2
 	CmdUserLogout 		= 3
@@ -32,6 +35,8 @@ const (
 
 	CmdWechatLoginAccess = 11
 
+	CmdNotice			= 12
+
 	CmdUserGameMessage  = 20
 
 		CmdEgUserReady		= 1
@@ -43,6 +48,9 @@ const (
 		CmdEgOutCard		= 7
 		CmdEgGameFinish		= 8
 		CmdEgReEnter		= 9
+		CmdEgOffline 		= 10
+		CmdEgReEnterOther	= 11
+		CmdVoice			= 12
 )
 
 type Message struct {
@@ -137,6 +145,18 @@ type UserCommonError struct {
 	ErrCode 	string
 }
 
+// lobby
+//==========================================================
+type LobbyNotice struct {
+	Content 	string
+	StartTime 	time.Time
+	FinishTime 	time.Time
+	Duration 	int
+	RepeatCount int
+}
+
+//==========================================================
+// game
 type ErguiGameStart struct {
 	Banker 		int
 	CardList 	[]int		//游戏开始，发送手牌
@@ -207,6 +227,11 @@ type ErguiUesrOutCard struct {
 	Card 			int		//出牌
 }
 
+type ErguiVoice struct {
+	UserId 			int
+	YYUrl 			string
+}
+
 type ErguiUserOutCardRet struct {
 	ErrCode 		string
 	Card 			int		//出的牌
@@ -227,4 +252,8 @@ type ErguiGameFinish struct {
 	XiQianMoney		[]float32	//洗钱
 	WinMoney 		[]float32	//本轮游戏获得钱
 	TotalWinMoney	[]float32	//大局结算获得钱
+
+	ZhuColor 		int			`json:"-"`
+	FriendCard 		int			`json:"-"`
+	FriendSeat 		int			`json:"-"`
 }

@@ -4,10 +4,10 @@ import (
 	"exportor/defines"
 	"net"
 	"errors"
-	"fmt"
 	"io"
 	"msgpacker"
 	"exportor/proto"
+	"mylog"
 )
 
 
@@ -52,10 +52,10 @@ func (client *tcpClient) GetRemoteAddress() string {
 func (client *tcpClient) Connect() error {
 	conn, err := net.Dial("tcp", client.opt.Host)
 	if err != nil {
-		fmt.Println("connect error", err)
+		mylog.Infoln("connect error", err)
 		return err
 	}
-	fmt.Println("connect addr ", client.opt.Host)
+	mylog.Infoln("connect addr ", client.opt.Host)
 	client.conn = conn
 	client.opt.ConnectCb(client)
 	if client.opt.AuthCb(client) != nil {
@@ -76,27 +76,27 @@ func (client *tcpClient) Close() error {
 }
 
 func (client *tcpClient) Send(cmd uint32, data interface{}) error {
-	//fmt.Println("send message 1", cmd, data)
+	//mylog.Infoln("send message 1", cmd, data)
 	client.sendCh <- &message{cmd: cmd, data: data}
-	//fmt.Println("send message 2", cmd, data)
+	//mylog.Infoln("send message 2", cmd, data)
 	return nil
 }
 
 func (client *tcpClient) sendLoop() {
-	//fmt.Println("client send loop error 1")
+	//mylog.Infoln("client send loop error 1")
 	for {
 		select {
 		case m:= <- client.sendCh:
-			//fmt.Println("send message 2 --------------->", m)
+			//mylog.Infoln("send message 2 --------------->", m)
 			if raw, err :=client.packer.Pack(m.cmd, m.data); err != nil {
-				//fmt.Println("send msg error ", m, err)
+				//mylog.Infoln("send msg error ", m, err)
 			} else {
-				fmt.Println("send message 2 --------------____>", raw[:8], string(raw))
+				mylog.Infoln("send message 2 --------------____>", raw[:8], string(raw))
 				client.conn.Write(raw)
 			}
 		}
 	}
-	fmt.Println("client send loop error")
+	mylog.Infoln("client send loop error")
 }
 
 func (client *tcpClient) recvLoop() {
@@ -109,10 +109,10 @@ func (client *tcpClient) recvLoop() {
 		for {
 			m, err := client.readMessage()
 			if err != nil {
-				fmt.Println("client recv lopp decode msg error", err)
+				mylog.Infoln("client recv lopp decode msg error", err)
 				return
 			}
-			//fmt.Println("callcb ", m)
+			//mylog.Infoln("callcb ", m)
 			client.opt.MsgCb(client, m)
 		}
 	}()
@@ -126,24 +126,24 @@ func (client *tcpClient) Auth() (*proto.Message, error) {
 }
 
 func (client *tcpClient) readMessage() (*proto.Message, error) {
-	//fmt.Println("client recv message ")
+	//mylog.Infoln("client recv message ")
 	if _, err := io.ReadFull(client.conn, client.headerBuf[:]); err != nil {
 		return nil, err
 	}
 
-	fmt.Println("client recv message headerBuf ", client.headerBuf)
+	mylog.Infoln("client recv message headerBuf ", client.headerBuf)
 	header, err := client.packer.Unpack(client.headerBuf[:])
 	if err != nil {
 		return nil, err
 	}
 
-	//fmt.Println("client recv message header ", header)
+	//mylog.Infoln("client recv message header ", header)
 	body := make([]byte, header.Len)
 	if _, err := io.ReadFull(client.conn, body[:]); err != nil {
 		return nil, err
 	}
 	header.Msg = body
-	fmt.Println("client recv message finish", header.Len, header.Cmd,string(header.Msg))
+	mylog.Infoln("client recv message finish", header.Len, header.Cmd,string(header.Msg))
 	return header, nil
 }
 

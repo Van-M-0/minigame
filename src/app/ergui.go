@@ -2,11 +2,14 @@ package main
 
 import (
 	"exportor/proto"
-	"fmt"
 	"msgpacker"
 	"runtime/debug"
 	"math/rand"
 	"time"
+	"mylog"
+	"net/http"
+	"encoding/json"
+	"strconv"
 )
 
 const (
@@ -37,16 +40,17 @@ func newErguiRoom(mgr *roomMgr) *erguiRoom {
 }
 
 func (eg *erguiRoom) UserOffline(user *userInfo) {
-	fmt.Println("user offline", user)
+	mylog.Infoln("user offline", user)
+	eg.handler.offline(user)
 }
 
 func (eg *erguiRoom) UserReconnect(user *userInfo) {
-	fmt.Println("user reconnect ", user)
+	mylog.Infoln("user reconnect ", user)
 	eg.handler.reenter(user)
 }
 
 func (eg *erguiRoom) UserOfflineTimeout(user *userInfo) {
-	fmt.Println("user offline timeout ", user)
+	mylog.Infoln("user offline timeout ", user)
 }
 
 func (eg *erguiRoom) CreateRoom(id int, user *userInfo, req *proto.UserCreateRoom) string {
@@ -71,7 +75,7 @@ func (eg *erguiRoom) EnterRoom(u *userInfo) {
 }
 
 func (eg *erguiRoom) GameMessage(user *userInfo, data interface{}) {
-	fmt.Println("xxx game message ", data)
+	mylog.Infoln("xxx game message ", data)
 
 	var message proto.UserMessage
 	if message.Cmd == proto.CmdEgUserReady {
@@ -86,14 +90,17 @@ func (eg *erguiRoom) GameMessage(user *userInfo, data interface{}) {
 		message.Msg = proto.ErguiFindFriend{}
 	} else if message.Cmd == proto.CmdEgOutCard {
 		message.Msg = proto.ErguiUesrOutCard{}
-	}
-
-	if err := msgpacker.UnMarshal(data.([]byte), &message); err != nil {
-		fmt.Println("unmarshal game messsage error ", err, data)
+	} else if message.Cmd == proto.CmdVoice {
+		message.Msg = proto.ErguiVoice{}
 		return
 	}
 
-	fmt.Println("game message ", message.Cmd, message.Msg)
+	if err := msgpacker.UnMarshal(data.([]byte), &message); err != nil {
+		mylog.Infoln("unmarshal game messsage error ", err, data)
+		return
+	}
+
+	mylog.Infoln("game message ", message.Cmd, message.Msg)
 
 	if message.Cmd == proto.CmdEgUserReady {
 		eg.handler.userReady(user, message.Msg)
@@ -107,22 +114,26 @@ func (eg *erguiRoom) GameMessage(user *userInfo, data interface{}) {
 		eg.handler.onUserFindFriend(user, message.Msg)
 	} else if message.Cmd == proto.CmdEgOutCard {
 		eg.handler.onUserOutCard(user, message.Msg)
+	} else if message.Cmd == proto.CmdVoice {
+		eg.handler.onUserVoice(user, message.Msg)
 	}
 }
 
 func (eg *erguiRoom) sfCall() bool {
 	defer func() {
 		if err := recover(); err != nil {
-			fmt.Println("--------------- error stack ----------------")
-			fmt.Println(err)
+			mylog.Infoln("--------------- error stack ----------------", eg.id, err)
+			mylog.Infoln(err)
 			debug.PrintStack()
-			fmt.Println("--------------------------------------------")
+			mylog.Infoln("--------------------------------------------")
 		}
 	}()
 	select {
-	case r := <- eg.reqCh:
-		fmt.Println("run process ", r)
-		if r.cmd == "r"	{
+	case r := <-eg.reqCh:
+		mylog.Infoln("run process ", r)
+		if r.cmd == "debug" {
+			eg.handler.debug(r.data)
+		} else if r.cmd == "r"	{
 			eg.UserReconnect(r.user)
 		} else if r.cmd == "o" {
 			eg.UserOffline(r.user)
@@ -152,7 +163,7 @@ func (eg *erguiRoom) run() {
 		}
 	}()
 
-	fmt.Println("ergui room run")
+	mylog.Infoln("ergui room run")
 }
 
 // ----------------------------------------------------------------
@@ -248,6 +259,7 @@ type playerInfo struct {
 }
 
 type egHandler struct {
+	prefix 		string
 	room 		*erguiRoom
 	t 			*time.Timer
 	stoped 		bool
@@ -286,6 +298,8 @@ type egHandler struct {
 	xiqian 		[]float32
 	scoreList 	[]int
 	totalWinMoney []float32
+
+	finishSnapshots *proto.ErguiGameFinish
 }
 
 func newEgHandler(r *erguiRoom) *egHandler {
@@ -294,21 +308,36 @@ func newEgHandler(r *erguiRoom) *egHandler {
 	handler.playerList = make(map[int]*playerInfo)
 	handler.cards = make([]int, MaxCardCount)
 	handler.banker = -1
-	handler.status = "ready"
-	handler.outcardList = make([]int, EgMaxSeat)
-	handler.xiqian = make([]float32, EgMaxSeat)
-	handler.scoreList = make([]int, EgMaxSeat)
 	handler.totalWinMoney = make([]float32, EgMaxSeat)
 	handler.leftRoud = MaxPlayerCardCount
 	handler.gameRound = 1
+	handler.reset()
+	handler.status = "ready"
+	handler.prefix = "["+strconv.Itoa(r.id)+"]"
 	return handler
+}
+
+func (h *egHandler) reset() {
+	h.scoreList = make([]int, EgMaxSeat)
+	h.xiqian = make([]float32, EgMaxSeat)
+	h.zhuColor = -1
+	h.outcardList = make([]int, EgMaxSeat)
+	h.firstCard = -1
+	h.canCallGou = false
+	h.status = "finish"
+	h.curseat = -1
+	h.bankerScore = 0
+	h.isCalled = false
+	h.leftRoud = MaxPlayerCardCount
+	h.friendSeat = -1
+	h.friend = -1
 }
 
 func (h *egHandler) createRoom(roomId int, user *userInfo, req *proto.UserCreateRoom) string {
 
 	conf := req
 
-	fmt.Println("recv client conf ", conf)
+	h.log("recv client conf ", conf)
 
 	exists := func(t int, arr []int) bool {
 		have := false
@@ -318,7 +347,7 @@ func (h *egHandler) createRoom(roomId int, user *userInfo, req *proto.UserCreate
 				break
 			}
 		}
-		fmt.Println(have)
+		h.log(have)
 		return have
 	}
 
@@ -331,7 +360,7 @@ func (h *egHandler) createRoom(roomId int, user *userInfo, req *proto.UserCreate
 
 	h.creator = user.UserId
 	h.conf = conf
-	fmt.Println("create room conf")
+	h.log("create room conf")
 
 	type rinfo struct {
 		RoomId 		int
@@ -351,9 +380,17 @@ func (h *egHandler) createRoom(roomId int, user *userInfo, req *proto.UserCreate
 	return "ok"
 }
 
+func (h *egHandler) log(arg ... interface{}) {
+	mylog.Infoln(h.prefix, arg)
+}
+
+func (h *egHandler) logNotLn(arg ... interface {}) {
+	mylog.Info(h.prefix, arg)
+}
+
 func (h *egHandler) onReleaseRoom() {
-	for _, u := range h.playerList {
-		u.RoomId = 0
+	for _, p := range h.playerList {
+		p.RoomId = 0
 	}
 }
 
@@ -413,7 +450,7 @@ func (h *egHandler) userEnterRoom(user *userInfo) {
 		})
 	}
 
-	fmt.Println("enter room ", enterRes)
+	h.log("enter room ", enterRes)
 	h.bcMessage(proto.CmdUserEnterRoom, &proto.UserEnterRoomRet{
 		ErrCode: "ok",
 		Kind: EgKind,
@@ -421,10 +458,22 @@ func (h *egHandler) userEnterRoom(user *userInfo) {
 	})
 }
 
+func (h *egHandler) offline(user *userInfo) {
+	type resOffline struct {
+		UserId 	int
+	}
+	h.bcMessage(proto.CmdEgOffline, &resOffline{
+		UserId: user.UserId,
+	})
+}
+
 func (h *egHandler) reenter(user *userInfo) {
 
 	if p, ok := h.playerList[user.UserId]; !ok {
-		fmt.Println("user reenter not exists ??? ", user, p)
+		h.log("user reenter not exists ??? ", user, p)
+		for _, u := range h.playerList {
+			h.log("reenter not exists ", u)
+		}
 		return
 	} else {
 		p.Cid = user.Cid
@@ -434,96 +483,217 @@ func (h *egHandler) reenter(user *userInfo) {
 		*userInfo
 		Ready 		bool
 		Seat 		int
-		HandCard	[]int
 		CallScore 	int
 	}
 
-	type reenterRes struct {
+	type commonres struct {
 		Status 		string
 		Creator 	int
 		Conf 		*proto.ErguiRoomConf
 		GameRound 	int
 		RenterUser 	int
 		Players 	map[int]*reenterPlayer
-
-		BottomCard	[]int
-
-		Banker 		int
-		CurBanker 	int
-		FirstCall	int
-		BankerScore int
-
-		ZhuColor 	int
-		Friend		int
-
-		FirstSeat 	int
-		FirstCard 	int
-		Curseat 	int
-
-		OutcardList []int
-
-		ScoreList 	[]int
-		XiQianMoney	[]float32
+		HandleCard 	[]int
 	}
 
-	ret := &reenterRes{
+	cs := &commonres{
+		Status: h.status,
+		Creator: h.creator,
+		Conf: &proto.ErguiRoomConf{
+			GameType: h.conf.GameType,
+			Round: h.conf.Round,
+			Score: h.conf.Score,
+		},
+		GameRound: h.gameRound,
+		RenterUser: user.UserId,
 		Players: make(map[int]*reenterPlayer),
 	}
+
 	for _, p := range h.playerList {
 		rp := &reenterPlayer{
 			userInfo: p.userInfo,
 			Ready: p.ready,
 			Seat: p.seat,
-			HandCard: p.handCard,
 			CallScore: p.callScore,
 		}
-		ret.Players[p.UserId] = rp
+		cs.Players[p.UserId] = rp
+		if p.UserId == user.UserId && h.status != "finish" && h.status != "ready" {
+			for i := 0; i < MaxCardIndex; i++ {
+				if p.indexs[i] > 0 {
+					cs.HandleCard = append(cs.HandleCard, i)
+				}
+			}
+		}
 	}
 
-	ret.Status = h.status
-	ret.Creator = h.creator
-	ret.Conf = &proto.ErguiRoomConf{
-		GameType: h.conf.GameType,
-		Round: h.conf.Round,
-		Score: h.conf.Score,
-	}
-	ret.GameRound = h.gameRound
-	ret.RenterUser = user.UserId
-	ret.BottomCard = h.bottomCard
-	ret.Banker = h.banker
-	ret.CurBanker = h.curBanker
-	ret.FirstCall = h.firstCall
-	ret.BankerScore = h.bankerScore
-	ret.ZhuColor = h.zhuColor
-	ret.Friend = h.friend
-	ret.FirstSeat = h.firstSeat
-	ret.FirstCard = h.firstCard
-	ret.Curseat = h.curseat
-	ret.OutcardList = h.outcardList
-	ret.ScoreList = h.scoreList
-	ret.XiQianMoney = h.xiqian
+	h.log("user enter status ", h.status)
 
-	ret1 := &reenterRes{
-		Status: h.status,
+	var reenterSelf interface{}
+	if h.status == "ready" {
+		type readyres struct {
+			*commonres
+		}
+		reenterSelf = &readyres{
+			commonres: cs,
+		}
+	} else if h.status == "call" {
+		type callres struct {
+			*commonres
+			CurBanker 	int
+			FirstCall	int
+			ScoreList 	[]int
+		}
+		CallScoreList := [EgMaxSeat]int{}
+		for _, p := range h.playerList {
+			h.log("player info ", p)
+			if p.seat < 0 || p.seat >= EgMaxSeat {
+				h.log("player seat ??? ", p.seat)
+				continue
+			}
+			CallScoreList[p.seat] = p.callScore
+		}
+		reenterSelf = &callres{
+			commonres:   cs,
+			CurBanker:   h.curBanker,
+			FirstCall:   h.firstCall,
+			ScoreList:	 CallScoreList[:],
+		}
+	} else if h.status == "zhu" {
+		type zhures struct {
+			*commonres
+			Banker 		int
+			BankerScore int
+			ZhuColor 	int
+		}
+		reenterSelf = &zhures{
+			commonres:   cs,
+			Banker:      h.banker,
+			BankerScore: h.bankerScore,
+			ZhuColor:    h.zhuColor,
+		}
+	} else if h.status == "change" {
+		type changeres struct {
+			*commonres
+			Banker 		int
+			BankerScore int
+			ZhuColor 	int
+			BottomCard	[]int
+		}
+		reenterSelf = &changeres{
+			commonres:   cs,
+			Banker:      h.banker,
+			BankerScore: h.bankerScore,
+			ZhuColor:    h.zhuColor,
+			BottomCard:  h.bottomCard,
+		}
+	} else if h.status == "friend" {
+		type friendres struct {
+			*commonres
+			Banker 		int
+			BankerScore int
+			ZhuColor 	int
+			BottomCard	[]int
+		}
+		reenterSelf = &friendres{
+			commonres:   cs,
+			Banker:      h.banker,
+			BankerScore: h.bankerScore,
+			ZhuColor:    h.zhuColor,
+			BottomCard:  h.bottomCard,
+		}
+	} else if h.status == "outcard" {
+		type outres struct {
+			*commonres
+			Banker 		int
+			BankerScore int
+			ZhuColor 	int
+			FriendCard 	int
+			FriendSeat  int
+			FirstSeat 	int
+			FirstCard 	int
+			Curseat 	int
+			OutcardList []int
+			BottomCard	[]int
+			ScoreList   []int
+		}
+		reenterSelf = &outres{
+			commonres:   cs,
+			Banker:      h.banker,
+			BankerScore: h.bankerScore,
+			ZhuColor:    h.zhuColor,
+			FriendCard:  h.friend,
+			FriendSeat:  h.friendSeat,
+			FirstSeat:   h.firstSeat,
+			FirstCard:   h.firstCard,
+			Curseat:     h.curseat,
+			OutcardList: h.outcardList[:],
+			BottomCard:  h.bottomCard,
+			ScoreList:   h.scoreList,
+		}
+	} else if h.status == "finish" {
+		type finishres struct {
+			*commonres
+			Banker 		int
+			BankerScore int
+			ZhuColor 	int
+
+			FriendCard 	int
+			FriendSeat  int
+
+			BankerBaoChang	bool		//庄家是否包场
+			GuangTou		bool		//闲家是否光头
+			BankerIsFriend	bool		//庄家是否喊自己为朋友
+			GameScore		[]int		//本轮游戏得分
+			XiQianMoney		[]float32	//洗钱
+			WinMoney 		[]float32	//本轮游戏获得钱
+			TotalWinMoney	[]float32	//大局结算获得钱
+		}
+		reenterSelf = &finishres{
+			commonres:   cs,
+			Banker:      h.banker,
+			BankerScore: h.bankerScore,
+			ZhuColor:    h.zhuColor,
+			FriendCard:  h.friend,
+			FriendSeat:  h.friendSeat,
+			BankerBaoChang: h.finishSnapshots.BankerBaoChang,
+			GuangTou:       h.finishSnapshots.GuangTou,
+			BankerIsFriend: h.finishSnapshots.BankerIsFriend,
+			GameScore:      h.finishSnapshots.GameScore,
+			XiQianMoney:    h.finishSnapshots.XiQianMoney,
+			WinMoney:       h.finishSnapshots.WinMoney,
+			TotalWinMoney:  h.finishSnapshots.TotalWinMoney,
+		}
+	}
+
+	type reenterOthers struct {
+		RenterUser int
+	}
+	ret1 := &reenterOthers{
 		RenterUser: user.UserId,
 	}
 
+	h.log("user recconnect ", h.playerList)
+	h.log("user recconnect 1", user)
+
 	for i := 0; i < EgMaxSeat; i++ {
-		p := h.playerList[i]
+		p := h.seatList[i]
 		if p == nil {
 			continue
 		}
 		if p.UserId == user.UserId {
-			h.sendGameMessage(p, proto.CmdEgReEnter, ret)
+			h.log("reply ret")
+			h.sendGameMessage(p, proto.CmdEgReEnter, reenterSelf)
 		} else {
-			h.sendGameMessage(p, proto.CmdEgReEnter, ret1)
+			h.log("reply ret1")
+			h.sendGameMessage(p, proto.CmdEgReEnterOther, ret1)
 		}
 	}
 }
 
 func (h *egHandler) userReady(user *userInfo, msg interface{}) {
 
-	fmt.Println("user ready data ", msg)
+	h.log("user ready data ", msg)
+	h.status = "ready"
 
 	type readyRes struct {
 		ErrCode 	string
@@ -541,7 +711,14 @@ func (h *egHandler) userReady(user *userInfo, msg interface{}) {
 		return
 	}
 
-	p := h.playerList[user.UserId]
+	p, exists := h.playerList[user.UserId]
+	if !exists {
+		h.sendGameMessage(p, proto.CmdEgUserReady, &readyRes{
+			ErrCode: "usernotinroom",
+		})
+		return
+	}
+
 	if p.ready {
 		return
 	}
@@ -579,7 +756,7 @@ func (h *egHandler) userCallBanker(user *userInfo, msg interface{}) {
 	//req := msg.(proto.ErguiCallBanker)
 	/*
 	if err := msgpacker.UnMarshal(msg, &req); err != nil {
-		fmt.Println("requet error: callbanker", err)
+		h.log("requet error: callbanker", err)
 		return
 	}
 	*/
@@ -625,7 +802,7 @@ func (h *egHandler) callScore(user *userInfo, score int) {
 	}
 
 	if h.status != "call" {
-		fmt.Println(">>>>>>>>user status not in call")
+		h.log(">>>>>>>>user status not in call")
 		h.sendGameMessage(p, proto.CmdEgUserCallBanker, &proto.ErguiCallbankerRet{
 			ErrCode: "notstatus",
 		})
@@ -695,15 +872,21 @@ func (h *egHandler) callScore(user *userInfo, score int) {
 			return
 		} else {
 			count := 0
+			onlyCallSeat := -1
+			onlyCallScore := -1
 			for _, p := range h.playerList {
 				if p.callScore != BANKER_SCORE_NO {
 					count++
+					if count == 1 {
+						onlyCallScore = p.callScore
+						onlyCallSeat = p.seat
+					}
 				}
 			}
 
 			if count == 1 {
-				h.banker = p.seat
-				h.bankerScore = p.callScore
+				h.banker = onlyCallSeat
+				h.bankerScore = onlyCallScore
 			} else {
 
 				for i := 0; i < EgMaxSeat; i++ {
@@ -732,8 +915,8 @@ func (h *egHandler) callScore(user *userInfo, score int) {
 
 	h.bcGameMessage(proto.CmdEgUserCallBanker, &proto.ErguiCallbankerRet{
 		ErrCode: "ok",
-		CurBankScore: score,
-		CurCallSeat: p.seat,
+		CurBankScore: h.bankerScore,
+		CurCallSeat: h.banker,
 		ToCallSeat: -1,
 	})
 
@@ -751,7 +934,7 @@ func (h *egHandler) onUserCallZhu(user *userInfo, msg interface{}) {
 	/*
 	var req proto.ErguiCallZhu
 	if err := msgpacker.UnMarshal(msg, &req); err != nil {
-		fmt.Println("requet error: call zhu", err)
+		h.log("requet error: call zhu", err)
 		return
 	}
 	*/
@@ -770,7 +953,7 @@ func (h *egHandler) callzhu(user *userInfo, color int) {
 	}
 
 	if h.status != "zhu" {
-		fmt.Println(">>>>>>>>user status not in zhu")
+		h.log(">>>>>>>>user status not in zhu")
 		h.sendGameMessage(p, proto.CmdEgCallZhu, &proto.ErguiCallZhuRet{
 			ErrCode: "notstatus",
 		})
@@ -786,7 +969,7 @@ func (h *egHandler) callzhu(user *userInfo, color int) {
 
 	h.killTimer()
 	h.zhuColor = color
-	fmt.Println("zhu color ", color)
+	h.log("zhu color ", color)
 
 	for _, p := range h.playerList {
 		if p.seat == h.banker {
@@ -815,15 +998,37 @@ func (h *egHandler) callzhu(user *userInfo, color int) {
 	})
 }
 
+func (h *egHandler) onUserVoice(user *userInfo, msg interface{}) {
+	/*
+	var req proto.ErguiChangeCard
+	if err := msgpacker.UnMarshal(msg, &req); err != nil {
+		h.log("requet error: change card", err)
+		return
+	}
+	*/
+	h.log("voice ", msg)
+	req := msg.(map[string]interface{})
+
+	h.log("voice msg ", req)
+
+	userid := req["UserId"].(float64)
+	url := req["YYUrl"].(string)
+
+	h.bcGameMessage(proto.CmdVoice, &proto.ErguiVoice{
+		UserId: int(userid),
+		YYUrl: url,
+	})
+}
+
 func (h *egHandler) onUserChangeCard(user *userInfo, msg interface{}) {
 	/*
 	var req proto.ErguiChangeCard
 	if err := msgpacker.UnMarshal(msg, &req); err != nil {
-		fmt.Println("requet error: change card", err)
+		h.log("requet error: change card", err)
 		return
 	}
 	*/
-	fmt.Println("user change card ", msg)
+	h.log("user change card ", msg)
 	req := msg.(map[string]interface{})
 	card := req["BottomCard"].([]interface{})
 	icard := []int{}
@@ -838,7 +1043,7 @@ func (h *egHandler) getRecommendCard() []int {
 }
 
 func (h *egHandler) changeCard(user *userInfo, data []int) {
-	fmt.Println("user change card ", data)
+	h.log("user change card ", data)
 
 	p := h.playerList[user.UserId]
 	if p.seat != h.banker {
@@ -849,7 +1054,7 @@ func (h *egHandler) changeCard(user *userInfo, data []int) {
 	}
 
 	if h.status != "change" {
-		fmt.Println(">>>>>>>>user status not in change")
+		h.log(">>>>>>>>user status not in change")
 		h.sendGameMessage(p, proto.CmdEgChangeCard, &proto.ErguiChangeCardRet{
 			ErrCode: "notstatus",
 		})
@@ -885,7 +1090,7 @@ func (h *egHandler) changeCard(user *userInfo, data []int) {
 	for i := 0; i < MaxBottomCard; i++ {
 		p.indexs[data[i]]--
 		if p.indexs[data[i]] < 0 {
-			fmt.Println("change card index < 0")
+			h.log("change card index < 0")
 		}
 	}
 
@@ -905,7 +1110,7 @@ func (h *egHandler) onUserFindFriend(user *userInfo, msg interface{}) {
 	/*
 	var req proto.ErguiFindFriend
 	if err := msgpacker.UnMarshal(msg, &req); err != nil {
-		fmt.Println("requet error: findFriend", err)
+		h.log("requet error: findFriend", err)
 		return
 	}
 	*/
@@ -931,7 +1136,7 @@ func (h *egHandler) findFriend(user *userInfo, card int) {
 		h.sendGameMessage(p, proto.CmdEgFindFriend, &proto.ErguiFindFriendRet{
 			ErrCode: "notstatus",
 		})
-		fmt.Println(">>>>>>>>user status not in change", h.status)
+		h.log(">>>>>>>>user status not in change", h.status)
 		return
 	}
 
@@ -962,7 +1167,7 @@ func (h *egHandler) onUserOutCard(user *userInfo, msg interface{}) {
 	/*
 	var req proto.ErguiUesrOutCard
 	if err := msgpacker.UnMarshal(msg, &req); err != nil {
-		fmt.Println("requet error: out card", err)
+		h.log("requet error: out card", err)
 		return
 	}
 	*/
@@ -982,16 +1187,16 @@ func (h *egHandler) checkOutCard(seat int, card int) string {
 	zcard := zhuCardBox[firstCard] != 0
 	zcolor := firstColor == h.zhuColor
 
-	fmt.Println("checkout ", h.outcardList, firstCard, zcard, zcolor, seat)
+	h.log("checkout ", card, h.outcardList, h.friendSeat, firstCard, zcard, zcolor, seat)
 
 	for i, p := range h.seatList {
-		fmt.Println("index ", i)
+		h.log("index ", i)
 		for m := 0; m < MaxCardIndex; m++ {
 			if p.indexs[m] != 0 {
-				fmt.Print(m, p.indexs[m], " , ")
+				h.logNotLn(m, p.indexs[m], " , ")
 			}
-			fmt.Println("")
 		}
+		h.log("")
 	}
 
 	ccolor := (card & 0xF0) >> 4
@@ -1010,7 +1215,7 @@ func (h *egHandler) checkOutCard(seat int, card int) string {
 		zmin := h.zhuColor << 4 + 0x03
 		zmax := h.zhuColor << 4 + 0x0F
 		p := h.seatList[seat]
-		for i := zmin; i < zmax; i++ {
+		for i := zmin; i <= zmax; i++ {
 			if p.indexs[i] != 0 {
 				return true
 			}
@@ -1036,9 +1241,7 @@ func (h *egHandler) checkOutCard(seat int, card int) string {
 		}
 
 	} else {
-		if zhuCardBox[card] != 0 {
-			return "ok"
-		}
+
 		if ccolor == firstColor {
 			return "ok"
 		}
@@ -1046,13 +1249,16 @@ func (h *egHandler) checkOutCard(seat int, card int) string {
 		fmin := firstColor << 4 + 0x03
 		fmax := firstColor << 4 + 0x0F
 		p := h.seatList[seat]
-		for i := fmin; i < fmax; i++ {
+		for i := fmin; i <= fmax; i++ {
 			val := int(i & 0x0F)
-			if p.indexs[i] != 0 && val != 2{
+			if p.indexs[i] != 0 && val != 0x0F {
 				return "you-fu"
 			}
 		}
 
+		if zhuCardBox[card] != 0 {
+			return "ok"
+		}
 		/*
 		if haveZhuCard() {
 			return "youzhu-fu"
@@ -1072,12 +1278,12 @@ func (h *egHandler) getMaxScoreSeat() int {
 	firstColor := (firstCard & 0xF0) >> 4
 
 	out2 := false
-	fmt.Println("max ", firstCard, firstColor, h.zhuColor, h.outcardList)
+	h.log("max ", firstCard, firstColor, h.zhuColor, h.outcardList)
 	for i := 0; i < EgMaxSeat; i++ {
 		card := h.outcardList[i]
 		color := (card & 0xF0) >> 4
 		val := int(card & 0x0F)
-		fmt.Println("i ", i, card, color, val)
+		h.log("i ", i, card, color, val)
 
 		// 大鬼 10000
 		// 小鬼 9900
@@ -1092,7 +1298,7 @@ func (h *egHandler) getMaxScoreSeat() int {
 		if card == 0x43 {
 			score += 9900
 		}
-		if val == 2 {
+		if val == 0x0F {
 			if color == h.zhuColor {
 				score += 8000
 			} else {
@@ -1140,7 +1346,7 @@ func (h *egHandler) getMaxScoreSeat() int {
 		}
 	}
 
-	fmt.Println("score list ", scoreList, maxSeat)
+	h.log("score list ", h.outcardList, scoreList, maxSeat)
 	return maxSeat
 }
 
@@ -1152,15 +1358,15 @@ func (h *egHandler) computeScore(maxSeat int) {
 }
 
 func (h *egHandler) outCard(user *userInfo, card int) {
-	fmt.Println("user out card ", user, card)
+	h.log("user out card ", user, card)
 
 	p := h.playerList[user.UserId]
 	if p == nil {
-		fmt.Println("out card ", h.playerList)
+		h.log("out card ", h.playerList)
 		return
 	}
 
-	fmt.Print("out seat", p.seat, h.curseat, h.leftRoud)
+	h.log("out seat", p.seat, h.curseat, h.leftRoud)
 	if h.status != "outcard" {
 		h.sendGameMessage(p, proto.CmdEgOutCard, &proto.ErguiUserOutCardRet{
 			ErrCode: "notstatus",
@@ -1182,7 +1388,7 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 		return
 	}
 
-	if card > len(p.indexs) || p.indexs[card] == 0 {
+	if card > len(p.indexs) || p.indexs[card] <= 0 {
 		h.sendGameMessage(p, proto.CmdEgOutCard, &proto.ErguiUserOutCardRet{
 			ErrCode: "notexists",
 		})
@@ -1211,6 +1417,14 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 	}
 
 	p.indexs[card]--
+	/*
+	for i := 0; i < len(p.handCard); i++ {
+		if p.handCard[i] == card {
+			p.handCard = append(p.handCard[:i], p.handCard[i+1:]...)
+			break
+		}
+	}
+	*/
 	h.outcardList[p.seat] = card
 
 	nextSeat := (h.curseat + 1) % EgMaxSeat
@@ -1221,7 +1435,7 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 		maxSeat := h.getMaxScoreSeat()
 		h.computeScore(maxSeat)
 
-		fmt.Println("left round ", h.leftRoud)
+		h.log("left round ", h.leftRoud)
 		h.leftRoud--
 		if h.leftRoud == 0 {
 			h.bcGameMessage(proto.CmdEgOutCard, &proto.ErguiUserOutCardRet{
@@ -1262,6 +1476,22 @@ func (h *egHandler) outCard(user *userInfo, card int) {
 	})
 }
 
+func (h *egHandler) getBankerScore() int {
+	bs := 0
+	if h.bankerScore == BANKER_SCORE_80 {
+		bs = 80
+	} else if h.bankerScore == BANKER_SCORE_85 {
+		bs = 85
+	} else if h.bankerScore == BANKER_SCORE_90 {
+		bs = 90
+	} else if h.bankerScore == BANKER_SCORE_95 {
+		bs = 95
+	} else if h.bankerScore == BANKER_SCORE_100 || h.bankerScore == BANKER_SCORE_100_GOU || h.bankerScore == BANKER_SCORE_100_BAO {
+		bs = 100
+	}
+	return bs
+}
+
 func (h *egHandler) finishGame() {
 
 	ts, bs, xs := 0, 0, 0
@@ -1279,16 +1509,19 @@ func (h *egHandler) finishGame() {
 			}
 		}
 	}
-	fmt.Println("finish score ", h.scoreList, h.banker, h.friendSeat, ts, bs, xs)
+	h.log("finish score ", h.scoreList, h.banker, h.friendSeat, ts, bs, xs)
 
+	bs = h.getBankerScore()
 	winScore := 0
-	if h.bankerScore + xs == 100 {
+	if bs + xs == 100 {
 
-	} else if h.bankerScore + xs > 100 {
-		winScore = 100 - h.bankerScore - xs
-	} else if h.bankerScore + xs < 100 {
-		winScore = h.bankerScore + xs - 100
+	} else if bs + xs > 100 {
+		winScore = 100 - bs - xs
+	} else if bs + xs < 100 {
+		winScore = bs + xs - 100
 	}
+
+	h.log("banker ", h.banker, h.friendSeat, h.bankerScore, bs, xs, winScore)
 
 	winScoreList := [EgMaxSeat]int{}
 
@@ -1316,37 +1549,38 @@ func (h *egHandler) finishGame() {
 				bankerBaoChang = true
 			}
 		} else {
-			fmt.Println("error in banker score")
+			h.log("error in banker score")
 		}
 
 		for i := 0; i < EgMaxSeat; i++ {
 			if i != h.banker && i != h.friendSeat {
 				winScoreList[i] = -1 * winScore
-				winScoreList[h.banker] += winScore
-			}
-			if i == h.friendSeat {
-				if h.banker == h.friendSeat {
-					winScoreList[h.banker] += winScore
+			} else if i == h.banker {
+				if i == h.friendSeat {
+					winScoreList[h.banker] = 3 * winScore
+				} else if bankerBaoChang {
+					winScoreList[h.banker] = 2 * winScore
 				} else {
-					if bankerBaoChang {
-					} else {
-						winScoreList[h.friendSeat] = winScore
-						winScoreList[h.banker] += -1 * winScore
-					}
+					winScoreList[h.banker] = winScore
 				}
+			} else if i == h.friendSeat && !bankerBaoChang {
+				winScoreList[h.friendSeat] = winScore
 			}
 		}
 
-	} else {	// banker win
+	} else if winScore > 0 {	// banker win
 		for i := 0; i < EgMaxSeat; i++ {
 			if i != h.banker && i != h.friendSeat {
 				winScoreList[i] = -1 * winScore
-				winScoreList[h.banker] += winScore
+			} else if i == h.banker {
+				if i == h.friendSeat {
+					winScoreList[h.banker] = 3 * winScore
+				} else {
+					winScoreList[h.banker] = winScore
+				}
+			} else if i == h.friendSeat {
+				winScoreList[h.friendSeat] = winScore
 			}
-		}
-		if h.banker != h.friendSeat {
-			winScoreList[h.banker] += -1 * winScore
-			winScoreList[h.friendSeat] = winScore
 		}
 	}
 
@@ -1360,20 +1594,30 @@ func (h *egHandler) finishGame() {
 		winScoreList[i] = winScoreList[i] * multiple
 	}
 
-
-	winMoney := [EgMaxSeat]float32{}
-	for i := 0; i < EgMaxSeat; i++ {
-		winMoney[i] = float32(winScoreList[i]) * h.getDijin()
-		h.totalWinMoney[i] += winMoney[i]
-	}
-
 	guangtou := false
 	selfBanker := false
 	if xs <= 0 {
 		guangtou = true
 	}
-	if h.curBanker == h.friendSeat {
+	if h.banker == h.friendSeat {
 		selfBanker = true
+	}
+
+	winMoney := [EgMaxSeat]float32{}
+	for i := 0; i < EgMaxSeat; i++ {
+		if guangtou {
+			if i != h.banker && i != h.friendSeat {
+				winMoney[i] += -1 * float32(50) * h.getDijin()
+			} else if i == h.banker {
+				winMoney[i] += 1 * float32(50) * h.getDijin()
+			}
+			if i == h.friendSeat {
+				winMoney[i] += 1 * float32(50) * h.getDijin()
+			}
+		}
+
+		winMoney[i] += float32(winScoreList[i]) * h.getDijin()
+		h.totalWinMoney[i] += winMoney[i]
 	}
 
 	gs := &proto.ErguiGameFinish{
@@ -1384,8 +1628,12 @@ func (h *egHandler) finishGame() {
 		GameScore: h.scoreList[:],
 		XiQianMoney: h.xiqian[:],
 		WinMoney: winMoney[:],
+
+		ZhuColor: h.zhuColor,
+		FriendCard: h.friend,
+		FriendSeat: h.friendSeat,
 	}
-	if h.gameRound + 1 == h.conf.Round {
+	if h.gameRound == h.conf.Round {
 		gs.TotalWinMoney = h.totalWinMoney[:]
 		h.bcGameMessage(proto.CmdEgGameFinish, gs)
 		h.room.mgr.lb.reqChn <- &lbRequest{
@@ -1393,14 +1641,14 @@ func (h *egHandler) finishGame() {
 				h.room.mgr.releaseRoom(h.room.id)
 			},
 		}
-		fmt.Println("room release start")
+		h.log("room release start")
 		return
 	} else {
 		h.bcGameMessage(proto.CmdEgGameFinish, gs)
 	}
 
 	h.gameRound++
-	fmt.Println("finish game winscore ", winScore)
+	h.log("finish game winscore ", winScore)
 
 	// clear
 	for _, p := range h.playerList {
@@ -1408,32 +1656,21 @@ func (h *egHandler) finishGame() {
 		p.callScore = 0
 	}
 
-	h.scoreList = make([]int, EgMaxSeat)
-	h.xiqian = make([]float32, EgMaxSeat)
-	h.zhuColor = -1
-	h.outcardList = make([]int, EgMaxSeat)
-	h.firstCard = -1
-	h.canCallGou = false
-	h.status = "finish"
-	h.curseat = -1
-	h.bankerScore = 0
-	h.isCalled = false
-	h.leftRoud = MaxPlayerCardCount
-	h.friendSeat = -1
-	h.friend = -1
+	h.finishSnapshots = gs
+	h.reset()
 }
 
 func (h *egHandler) startGame() {
 	copy(h.cards, cardBox)
 	randCards(h.cards)
 
-	fmt.Println("game start ", h.playerList)
+	h.log("game start ", h.playerList)
 
 	index := 0
 	for _, p := range h.playerList {
 		p.RoomCard = p.RoomCard - _config.consumeRoomCard
 		p.handCard = h.cards[index:index+MaxPlayerCardCount]
-		fmt.Print("c ", p.UserName, p.handCard)
+		h.log("c ", p.UserName, p.handCard)
 		index += MaxPlayerCardCount
 		p.indexs = make([]int, MaxCardIndex)
 		for i := 0; i < MaxPlayerCardCount; i++ {
@@ -1524,7 +1761,6 @@ func (h *egHandler) bcMessage(cmd uint32, data interface{}) {
 
 func marshalData(data interface{}) []byte{
 	if data, err := msgpacker.Marshal(data); err != nil {
-		fmt.Println("marshal data error ", err)
 		return nil
 	} else {
 		return data
@@ -1533,7 +1769,7 @@ func marshalData(data interface{}) []byte{
 
 func (h *egHandler) sendGameMessage(p *playerInfo, cmd uint32, data interface{}) {
 	//msg := marshalData(data)
-	fmt.Println("send game message ", p.UserId, cmd, data)
+	h.log("send game message ", p.UserId, cmd, data)
 	h.sendMessage(p, proto.CmdUserGameMessage, &proto.UserMessageRet{
 		Cmd: cmd,
 		Msg: data,
@@ -1541,10 +1777,158 @@ func (h *egHandler) sendGameMessage(p *playerInfo, cmd uint32, data interface{})
 }
 
 func (h *egHandler) bcGameMessage(cmd uint32, data interface{}) {
-	//msg := marshalData(data)
-	fmt.Println("bc game message", cmd, data)
+	h.log("bc game message", cmd, data)
 	h.bcMessage(proto.CmdUserGameMessage, &proto.UserMessageRet{
 		Cmd: cmd,
 		Msg: data,
 	})
+}
+
+func (h *egHandler) debug(httpWriter interface{}) {
+	w := httpWriter.(http.ResponseWriter)
+
+	type debugPlayer struct {
+		*userInfo
+		Ready 		bool
+		Seat 		int
+		HandCard	[]string
+		Indexs 		[]string
+		CallScore 	int
+	}
+
+	type debugMarshal struct {
+		T 			*time.Timer
+		Stoped 		bool
+		Tid 		uint32
+		Status 		string
+		GameRound	int
+
+		Conf 		*proto.UserCreateRoom
+		Creator 	int
+		PlayerList 	map[int]*debugPlayer
+		SeatList 	[EgMaxSeat]*debugPlayer
+		Cards 		[]int
+		BottomCard	[]int
+
+		IsCalled 	bool
+
+		Banker 		int
+		CurBanker 	int
+		FirstCall	int
+		//callRound 	int
+		CanCallGou 	bool
+		BankerScore int
+
+		ZhuColor 	int
+
+		Friend		int
+		FriendSeat	int
+
+		FirstSeat 	int
+		FirstCard 	int
+		Curseat 	int
+		LeftRoud 	int
+
+		OutcardList []int
+
+		Xiqian 		[]float32
+		ScoreList 	[]int
+		TotalWinMoney []float32
+
+		FinishSnapshots *proto.ErguiGameFinish
+	}
+
+	d := &debugMarshal{
+		T: h.t,
+		Stoped: h.stoped,
+		Status: h.status,
+		GameRound: h.gameRound,
+		Conf: h.conf,
+		Creator: h.creator,
+		Cards: h.cards,
+		BottomCard: h.bottomCard,
+		IsCalled: h.isCalled,
+		Banker: h.banker,
+		CurBanker: h.curBanker,
+		FirstCall: h.firstCall,
+		CanCallGou: h.canCallGou,
+		BankerScore: h.bankerScore,
+		ZhuColor: h.zhuColor,
+		Friend: h.friend,
+		FriendSeat: h.friendSeat,
+		FirstCard: h.firstCard,
+		Curseat: h.curseat,
+		LeftRoud: h.leftRoud,
+		OutcardList: h.outcardList,
+		Xiqian: h.xiqian,
+		ScoreList: h.scoreList,
+		TotalWinMoney: h.totalWinMoney,
+		FinishSnapshots: h.finishSnapshots,
+		PlayerList: make(map[int]*debugPlayer),
+	}
+
+	for i, p := range h.playerList {
+		d.PlayerList[i] = &debugPlayer{
+			userInfo: p.userInfo,
+			Ready: p.ready,
+			Seat: p.seat,
+			HandCard: h.getCardValues(p.handCard),
+			Indexs: h.getCardIndexs(p.indexs),
+			CallScore: p.callScore,
+		}
+	}
+	for i, p := range h.seatList {
+		if p != nil {
+			d.SeatList[i] = &debugPlayer{
+				userInfo: p.userInfo,
+				Ready: p.ready,
+				Seat: p.seat,
+				HandCard: h.getCardValues(p.handCard),
+				Indexs: h.getCardIndexs(p.indexs),
+				CallScore: p.callScore,
+			}
+		} else {
+			d.SeatList[i] = nil
+		}
+	}
+
+	data, err := json.Marshal(d)
+	if err != nil {
+		h.log("debug marshal error ", err)
+		return
+	}
+	w.Write(data)
+}
+
+func (h *egHandler) getCardValues(card []int) []string {
+
+	carolos := []string {
+		"方块", "梅花", "红桃", "黑桃", "鬼",
+	}
+
+	ret := make([]string, len(card))
+	for i, c := range card {
+		color := (c & 0xF0) >> 4
+		val := int(c & 0x0F)
+		ret[i] = carolos[color] + strconv.Itoa(val)
+	}
+	return ret
+}
+
+func (h *egHandler) getCardIndexs(index []int) []string {
+	ret := make([]string, 0)
+
+	carolos := []string {
+		"方块", "梅花", "红桃", "黑桃", "鬼",
+	}
+
+	for c, num := range index {
+		if num > 0 {
+			color := (c & 0xF0) >> 4
+			val := int(c & 0x0F)
+			ret = append(ret, carolos[color] + strconv.Itoa(val))
+		}
+	}
+
+	return ret
 }

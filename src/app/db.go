@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
+	"mylog"
+	"strconv"
 )
 
 var db *dbClient
@@ -47,10 +49,10 @@ func newDbClient() *dbClient {
 		opt.name,
 	)
 
-	//fmt.Println("db proxy connection info ", uri)
+	//mylog.Infoln("db proxy connection info ", uri)
 	db, err := gorm.Open("mysql", uri)
 	if err != nil {
-		fmt.Println("create db proxy err ", err)
+		mylog.Infoln("create db proxy err ", err)
 		return nil
 	}
 
@@ -82,7 +84,7 @@ func (dc *dbClient) handleRequest() {
 }
 
 func (dc *dbClient) InitTable() {
-	fmt.Println("init tables")
+	mylog.Infoln("init tables")
 	/*
 		dc.DropTable(&table.T_Accounts{})
 		dc.DropTable(&table.T_Games{})
@@ -138,7 +140,7 @@ func (dc *dbClient) AddAccountInfo(accInfo *T_Accounts) bool {
 
 // t_users : user info
 func (dc *dbClient) AddUserInfo(userInfo *T_Users) bool {
-	fmt.Println("add user info : ", userInfo)
+	mylog.Infoln("add user info : ", userInfo)
 	return dc.db.Create(userInfo).RowsAffected != 0
 }
 
@@ -226,6 +228,9 @@ func dbLobbyUserLogin(account, name, headimg string, sex uint8, cb func(accounts
 			})
 			ok = db.GetAccountInfo(account, &acc)
 			db.GetUserInfo(account, &user)
+			newName := "name"+"name" + strconv.Itoa(int(user.Userid))
+			db.db.Model(user).Update("name", newName)
+			user.Name = newName
 			if ok {
 				cb(&acc, &user, 0)
 			} else {
@@ -237,7 +242,7 @@ func dbLobbyUserLogin(account, name, headimg string, sex uint8, cb func(accounts
 
 func dbCheckConnection() {
 	dbRequest(func() {
-		fmt.Println("db checking ...")
+		mylog.Infoln("db checking ...")
 	})
 }
 

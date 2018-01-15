@@ -3,7 +3,7 @@ package network
 import (
 	"exportor/defines"
 	"net"
-	"fmt"
+	"mylog"
 )
 
 type tcpServer struct {
@@ -26,16 +26,16 @@ func (server *tcpServer) Start() error {
 	if err != nil {
 		return err
 	}
-	fmt.Println("listening : ", l.Addr())
+	mylog.Infoln("listening : ", l.Addr())
 	defer func() {
 		l.Close()
 	}()
 
 		for {
-			//fmt.Println("server start ", server.opt.Host)
+			//mylog.Infoln("server start ", server.opt.Host)
 			conn, err := l.Accept()
-			//fmt.Println("server start ", server.opt.Host, conn, err)
-			fmt.Println("accept client ", conn.RemoteAddr(), conn.LocalAddr())
+			//mylog.Infoln("server start ", server.opt.Host, conn, err)
+			mylog.Infoln("accept client ", conn.RemoteAddr(), conn.LocalAddr())
 			if err != nil {
 				continue
 			}
@@ -53,7 +53,7 @@ func (server *tcpServer) Stop() error {
 }
 
 func (server *tcpServer) handleClient(conn net.Conn) {
-	fmt.Println("handle client ", conn)
+	mylog.Infoln("handle client ", conn)
 	client := newTcpClient(&defines.NetClientOption{
 	})
 	client.configureConn(conn)
@@ -72,7 +72,7 @@ func (server *tcpServer) handleClient(conn net.Conn) {
 	for {
 		m, err := client.readMessage()
 		if err != nil {
-			fmt.Println("decode msg error", err)
+			mylog.Infoln("decode msg error", err)
 			return
 		}
 		server.opt.MsgCb(client, m)

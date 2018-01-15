@@ -2,25 +2,41 @@ package main
 
 import (
 	"net/http"
-	"fmt"
 	"io/ioutil"
 	"encoding/json"
+	"mylog"
+	"strconv"
+	"time"
 )
 
 type httpServer struct {
 	w 		*watchdog
+	lb 		*lobby
 }
 
 
-func newHttpServer() *httpServer {
-	hp := &httpServer{}
+func newHttpServer(lb *lobby) *httpServer {
+	hp := &httpServer{
+		lb: lb,
+	}
 	return hp
 }
 
 func (hp *httpServer) start() {
+	http.HandleFunc("/debug", func(w http.ResponseWriter, r *http.Request) {
+		mylog.Infoln("receive debug request ", w, r)
+		r.ParseForm()
+		room, err := strconv.Atoi(r.Form["room"][0])
+		if err != nil {
+			mylog.Infoln("parse room error ", r.Form, err)
+		} else {
+			hp.lb.onDebug(room, w, r)
+		}
+		<- time.After(time.Second * 3)
+	})
 	go func() {
-		if err := http.ListenAndServe(":11447", nil); err != nil {
-			fmt.Println("http serve error ", err)
+		if err := http.ListenAndServe("172.18.65.107:11447", nil); err != nil {
+			mylog.Infoln("http serve error ", err)
 		}
 	}()
 }
@@ -38,7 +54,7 @@ func (hp *httpServer) wechatLogin(code string) (string, string, string, string, 
 		GrantType string	`json:"grant_type"`
 	}
 
-	fmt.Println("client wechat login ", code)
+	mylog.Infoln("client wechat login ", code)
 
 	request := "appid=" + appId + "&"+
 		"secret=" + secret + "&" +
@@ -70,15 +86,15 @@ func (hp *httpServer) wechatLogin(code string) (string, string, string, string, 
 				OpenId = r.OpenId
 			} else {
 				errCode = "openid"
-				fmt.Println("wechatlogin error")
-				fmt.Println(request)
-				fmt.Println(d)
-				fmt.Println(err)
+				mylog.Infoln("wechatlogin error")
+				mylog.Infoln(request)
+				mylog.Infoln(d)
+				mylog.Infoln(err)
 			}
 		}
 	})
 
-	fmt.Println("wechat client access retcode ", errCode)
+	mylog.Infoln("wechat client access retcode ", errCode)
 	if errCode != "ok" {
 		return errCode, "", "", "", "", -1
 	}
@@ -111,29 +127,29 @@ func (hp *httpServer) wechatLogin(code string) (string, string, string, string, 
 					sex = r.Sex
 				} else {
 					errCode = "userinfo"
-					fmt.Println("wechat login get user info")
-					fmt.Println(request)
-					fmt.Println(d)
-					fmt.Println(err)
+					mylog.Infoln("wechat login get user info")
+					mylog.Infoln(request)
+					mylog.Infoln(d)
+					mylog.Infoln(err)
 				}
 			}
 		})
 
-	fmt.Println("wechat client userinfo err code", errCode)
+	mylog.Infoln("wechat client userinfo err code", errCode)
 	return errCode, AccToken, OpenId, nickName, headImg, sex
 }
 
 func (hp *httpServer) get2(url string, content string, bHttps bool, cb func(bool, interface{})) {
 	request := url + "?" + content
-	fmt.Println("http request ", request)
+	mylog.Infoln("http request ", request)
 	res, err := http.Get(request)
 
 	if res.StatusCode == 200 {
 		body, _ := ioutil.ReadAll(res.Body)
-		fmt.Println("get ", request, res, err, string(body))
+		mylog.Infoln("get ", request, res, err, string(body))
 		cb(true, body)
 	} else {
-		fmt.Println("http status errcode ", res.StatusCode)
+		mylog.Infoln("http status errcode ", res.StatusCode)
 		cb(false, nil)
 	}
 }
